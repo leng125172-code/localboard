@@ -1,0 +1,69 @@
+{
+  "description": "Record Codex and subagent lifecycle activity in the local LocalBoard broker.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/src/hooks/codex-event.mjs\"",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/hooks/codex-event.mjs') }\"",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/src/hooks/codex-event.mjs\"",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/hooks/codex-event.mjs') }\"",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/src/hooks/codex-event.mjs\"",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/hooks/codex-event.mjs') }\"",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/src/hooks/codex-event.mjs\"",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/hooks/codex-event.mjs') }\"",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/src/hooks/codex-event.mjs\"",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/hooks/codex-event.mjs') }\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

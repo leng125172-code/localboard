@@ -1,0 +1,16 @@
+{
+  "github": {
+    "owner": "your-user-or-org",
+    "ownerType": "user",
+    "projectNumber": 1,
+    "repositories": [
+      "your-user-or-org/your-repository"
+    ]
+  },
+  "sync": {
+    "pullIntervalSeconds": 60,
+    "conflictPolicy": "manual",
+    "actionsReadOnly": true
+  }
+}
+
