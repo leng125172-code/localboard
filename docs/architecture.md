@@ -12,10 +12,21 @@ Sticky windows ──────────────────┘       �
                                         └── gh CLI ── GitHub API
 ```
 
-- Desktop 用 Electron 的 `requestSingleInstanceLock` 防止重复主窗口；第二次启动只聚焦已有窗口。
+- Desktop 用 Electron 的 `requestSingleInstanceLock` 防止重复应用；第二次启动只聚焦已有窗口。应用内部只维护一个固定 ID 为 `codex-activity` 的置顶便签。
 - broker 用原子目录锁保证每个 OS 用户只有一个 owner。PID 存活检查、5 秒创建宽限期和健康检查共同处理并发启动、崩溃残锁与 PID 复用。
 - UI 和 broker 解耦。关闭 UI 不终止后台服务；多个 Codex 进程只做客户端。
 - 每仓库 JSON 写入使用锁目录、临时文件和原子 rename。broker 再增加进程内串行队列。
+- 每个 Codex 主会话以 `session_id` 为键，subagent 再附加 `agent_id`。upsert 只能替换自己的卡片；无 Hook session ID 的 Skill 发布使用随机键，因此并行 CLI 不会互相覆盖。结束事件隐藏对应卡片，异常退出的卡片 24 小时后从活动视图过期。
+
+## GitHub 同步门禁
+
+仓库探测顺序固定为 Git → remote/config → `gh auth status`。任何前置条件不满足都立即停止，后续命令不会运行：
+
+- 非 Git 路径返回 `not-git`，且不会调用 `gh`。
+- 没有 GitHub remote 或 `.localboard/config.json` 返回 `github-not-configured`，且不会调用 `gh`。
+- GitHub 配置显式 `enabled=false` 返回 `github-disabled`。
+- `gh` 未认证返回 `github-not-authenticated`。
+- 只有 `ready` 对应 `syncGitHub=true`。
 
 ## 同步模型
 
@@ -33,7 +44,7 @@ Sticky windows ──────────────────┘       �
 
 - pre-commit 自动验证并 stage `.localboard/todos.json`。
 - pre-push 发现该文件仍 dirty 时中止，避免把旧版本推到远端。
-- 安装 Hook 时若已存在同名 Hook，当前实现拒绝覆盖；后续使用 hook dispatcher 兼容 Husky、Lefthook 等工具。
+- Hook 调用 PATH 中的 `localboard` CLI，并通过 `git rev-parse --git-path hooks` 支持普通仓库与 worktree。安装时若已存在同名 Hook，当前实现拒绝覆盖；后续使用 hook dispatcher 兼容 Husky、Lefthook 等工具。
 - 多 worktree 不能只用绝对路径识别同一仓库。下一阶段以 `git rev-parse --git-common-dir`、remote identity、worktree path 组成身份，并把待办合并冲突显示给用户。
 
 ## 安全与可靠性
@@ -41,6 +52,5 @@ Sticky windows ──────────────────┘       �
 - 不保存 token，复用 `gh` 的凭据存储与权限模型。
 - broker 只绑定 loopback，每次安装生成 256-bit 随机 bearer token。正式发行版还应在 Windows 对 endpoint 文件设置当前用户 ACL，在 Unix 强制 0600。
 - repo 路径和 Hook 输入都视为不可信；子进程使用参数数组且 `shell=false`。Hook stdout 只输出合法空 JSON，不把 transcript 或 secret 注入模型上下文。
-- SQLite 保存审计事件、outbox、缓存与幂等结果。应增加保留期、导出和清理策略，避免无限增长。
+- SQLite 保存审计事件、每会话仓库上下文、outbox、缓存与幂等结果。应增加保留期、导出和清理策略，避免无限增长。
 - GitHub API 需尊重 primary/secondary rate limits；重试应使用指数退避、抖动和 `Retry-After`，权限/验证错误不自动重试。
-

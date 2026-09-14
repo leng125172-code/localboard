@@ -49,11 +49,21 @@ export async function startBroker() {
       if (request.method === 'GET' && url.pathname === '/v1/events') {
         return send(response, 200, { events: state.listAgentEvents(url.searchParams.get('limit') ?? 100) });
       }
+      if (request.method === 'GET' && url.pathname === '/v1/contexts') {
+        return send(response, 200, { contexts: state.listAgentContexts({ includeEnded: url.searchParams.get('includeEnded') !== 'false' }) });
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/contexts') {
+        return send(response, 200, await serialize(async () => state.upsertAgentContext(await readJson(request))));
+      }
+      if (request.method === 'DELETE' && url.pathname.startsWith('/v1/contexts/')) {
+        return send(response, 200, await serialize(async () => state.deleteAgentContext(decodeURIComponent(url.pathname.slice(13)))));
+      }
       if (request.method === 'GET' && url.pathname === '/v1/notes') {
         return send(response, 200, { notes: state.listNotes() });
       }
       if (request.method === 'POST' && url.pathname === '/v1/notes') {
-        return send(response, 200, await serialize(async () => state.saveNote(await readJson(request))));
+        const body = await readJson(request);
+        return send(response, 200, await serialize(async () => state.saveNote({ ...body, id: 'codex-activity' })));
       }
       if (request.method === 'DELETE' && url.pathname.startsWith('/v1/notes/')) {
         return send(response, 200, await serialize(async () => state.deleteNote(decodeURIComponent(url.pathname.slice(10)))));

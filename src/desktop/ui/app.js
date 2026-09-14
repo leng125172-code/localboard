@@ -2,7 +2,7 @@ const api = window.localboard;
 const app = document.querySelector('#app');
 const query = new URLSearchParams(location.search);
 
-if (query.get('sticky') === '1') renderSticky(query.get('id'));
+if (query.get('sticky') === 'activity') renderActivitySticky(query.get('id'));
 else renderApplication();
 
 async function renderApplication() {
@@ -99,11 +99,10 @@ async function loadAgents() {
 }
 
 async function loadNotes() {
-  const data = await api.request('/v1/notes');
-  document.querySelector('#view').innerHTML = `<div class="toolbar"><button class="primary" id="new-note">新建置顶便签</button></div>
-    <div class="grid">${data.notes.length ? data.notes.map((note) => `<article class="card"><h3>${escapeHtml(note.title)}</h3><p>${escapeHtml(note.body.slice(0, 140))}</p><button class="secondary" data-note="${note.id}">打开</button></article>`).join('') : '<div class="empty">还没有屏幕便签</div>'}</div>`;
-  document.querySelector('#new-note').onclick = () => api.openSticky({ title: '新便签', body: '', color: '#fff3a6', alwaysOnTop: true });
-  document.querySelectorAll('[data-note]').forEach((button) => button.onclick = () => api.openSticky(data.notes.find((note) => note.id === button.dataset.note)));
+  const data = await api.request('/v1/contexts?includeEnded=true');
+  document.querySelector('#view').innerHTML = `<div class="toolbar"><button class="primary" id="open-note">打开唯一执行便签</button></div>
+    <div class="panel">${data.contexts.length ? data.contexts.map(contextRow).join('') : '<div class="empty">尚未收到 Codex 执行路径</div>'}</div>`;
+  document.querySelector('#open-note').onclick = () => api.openSticky({});
 }
 
 async function loadProject(context) {
@@ -205,13 +204,29 @@ function githubRequest(body) {
   return api.request('/v1/github', { method: 'POST', body, timeoutMs: 60000 });
 }
 
-async function renderSticky(id) {
+async function renderActivitySticky(id) {
   const data = await api.request('/v1/notes');
   const note = data.notes.find((item) => item.id === id);
   if (!note) return app.textContent = '便签不存在';
   document.body.style.background = note.color;
-  app.innerHTML = `<div class="sticky" style="background:${escapeHtml(note.color)}"><div class="sticky-head">${escapeHtml(note.title)}</div><textarea aria-label="便签内容">${escapeHtml(note.body)}</textarea><div class="sticky-foot">自动保存 · Local only</div></div>`;
+  app.innerHTML = `<div class="sticky" style="background:${escapeHtml(note.color)}"><div class="sticky-head"><span>${escapeHtml(note.title)}</span><div class="sticky-window-actions"><button type="button" data-window-action="minimize" title="最小化" aria-label="最小化">−</button><button type="button" data-window-action="hide" title="隐藏；可从主窗口再次打开" aria-label="隐藏">×</button></div></div>
+    <div class="sticky-contexts" id="sticky-contexts"></div>
+    <textarea aria-label="共享便签内容" placeholder="手写备注；Codex 不会覆盖这里">${escapeHtml(note.body)}</textarea>
+    <div class="sticky-foot">一个窗口 · 多会话隔离 · 自动保存</div></div>`;
   const textarea = document.querySelector('textarea');
+  document.querySelectorAll('[data-window-action]').forEach((button) => {
+    button.addEventListener('click', () => api.windowAction(button.dataset.windowAction));
+  });
+  const refreshContexts = async () => {
+    try {
+      const contexts = await api.request('/v1/contexts?includeEnded=false');
+      document.querySelector('#sticky-contexts').innerHTML = contexts.contexts.length
+        ? contexts.contexts.map(contextCard).join('')
+        : '<div class="sticky-empty">等待 Codex 上报执行路径…</div>';
+    } catch {}
+  };
+  await refreshContexts();
+  setInterval(refreshContexts, 2000);
   let timer;
   textarea.addEventListener('input', () => {
     clearTimeout(timer);
@@ -220,6 +235,32 @@ async function renderSticky(id) {
       await api.request('/v1/notes', { method: 'POST', body: { ...note, ...bounds, body: textarea.value } });
     }, 300);
   });
+}
+
+function contextRow(context) {
+  const repo = context.repository;
+  return `<div class="row"><div><strong>${escapeHtml(repo.repositoryName || '非 Git 目录')}</strong>
+    <div class="meta">${escapeHtml(repo.cwd)} · ${escapeHtml(context.sessionId || context.contextKey)}</div></div>
+    <span class="badge">${escapeHtml(syncLabel(repo))}</span></div>`;
+}
+
+function contextCard(context) {
+  const repo = context.repository;
+  return `<article class="context-card ${escapeHtml(context.status)}"><div class="context-title"><strong>${escapeHtml(repo.repositoryName || '非 Git 目录')}</strong><span>${escapeHtml(context.status)}</span></div>
+    <div>${escapeHtml(repo.branch || repo.syncReason)}</div>
+    <small title="${escapeHtml(repo.cwd)}">${escapeHtml(repo.cwd)}</small>
+    <small>${escapeHtml(syncLabel(repo))} · ${escapeHtml((context.sessionId || context.contextKey).slice(0, 14))}</small></article>`;
+}
+
+function syncLabel(repository) {
+  const labels = {
+    ready: `GitHub · ${repository.githubRepository}`,
+    'not-git': '仅路径，不同步 GitHub',
+    'github-disabled': 'GitHub 同步已关闭',
+    'github-not-configured': 'GitHub 未配置',
+    'github-not-authenticated': 'GitHub 未登录'
+  };
+  return labels[repository.syncReason] || repository.syncReason;
 }
 
 function showError(error) { document.querySelector('#error').innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`; }

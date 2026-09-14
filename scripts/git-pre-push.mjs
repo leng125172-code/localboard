@@ -1,15 +1,9 @@
 #!/usr/bin/env node
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { findGitRoot } from '../src/core/paths.mjs';
+import { runPrePush } from '../src/core/git-hooks.mjs';
 
-const execFileAsync = promisify(execFile);
-const root = await findGitRoot();
-const { stdout } = await execFileAsync('git', ['status', '--porcelain', '--', '.localboard/todos.json'], {
-  cwd: root, windowsHide: true
-});
-if (stdout.trim()) {
-  console.error('LocalBoard: .localboard/todos.json has uncommitted changes. Commit them before push.');
+try {
+  await runPrePush();
+} catch (error) {
+  console.error(`LocalBoard pre-push failed: ${error.message}`);
   process.exit(1);
 }
-

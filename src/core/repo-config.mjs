@@ -1,24 +1,21 @@
-import { readFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { join } from 'node:path';
+import { readRepoConfig } from './config-file.mjs';
+import { inspectRepositoryContext } from './repository-context.mjs';
 
-const execFileAsync = promisify(execFile);
-
-export async function readRepoConfig(repoRoot) {
-  try {
-    return JSON.parse(await readFile(join(repoRoot, '.localboard', 'config.json'), 'utf8'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    return {};
-  }
-}
+export { readRepoConfig } from './config-file.mjs';
 
 export async function githubContext(repoRoot, options = {}) {
   const config = await readRepoConfig(repoRoot);
-  const configured = config.github?.repositories?.[0];
-  const nameWithOwner = options.repository || configured || await inferGitHubRepository(repoRoot);
-  if (!nameWithOwner?.includes('/')) throw new Error('GitHub repository is not configured; pass --repository owner/name');
+  const repository = await inspectRepositoryContext(repoRoot, {
+    config,
+    repositoryOverride: options.repository,
+    checkGitHubAuth: options.requireAuth !== false
+  });
+  if (!repository.isGitRepository) throw new Error('GitHub sync skipped: current path is not an initialized Git repository');
+  if (!repository.githubConfigured) throw new Error('GitHub sync skipped: no GitHub remote or LocalBoard GitHub configuration');
+  if (options.requireAuth !== false && !repository.githubAuthConnected) {
+    throw new Error('GitHub sync skipped: gh is not authenticated; run gh auth login');
+  }
+  const nameWithOwner = repository.githubRepository;
   const [owner, repo] = nameWithOwner.split('/');
   return {
     owner,
@@ -26,18 +23,7 @@ export async function githubContext(repoRoot, options = {}) {
     ownerType: options.ownerType || config.github?.ownerType || 'user',
     projectOwner: options.owner || config.github?.owner || owner,
     projectNumber: Number(options.projectNumber || config.github?.projectNumber || 0),
-    config
+    config,
+    repository
   };
 }
-
-async function inferGitHubRepository(repoRoot) {
-  try {
-    const { stdout } = await execFileAsync('git', ['config', '--get', 'remote.origin.url'], { cwd: repoRoot, windowsHide: true });
-    const url = stdout.trim().replace(/\.git$/, '');
-    const match = url.match(/github\.com[/:]([^/]+)\/([^/]+)$/i);
-    return match ? `${match[1]}/${match[2]}` : null;
-  } catch {
-    return null;
-  }
-}
-

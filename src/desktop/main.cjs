@@ -5,33 +5,54 @@ const instanceLock = app.requestSingleInstanceLock({ cwd: process.cwd() });
 if (!instanceLock) app.quit();
 
 let mainWindow;
-const stickyWindows = new Map();
+let stickyWindow;
 
 app.on('second-instance', (_event, argv, cwd) => {
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-  mainWindow.webContents.send('second-instance', { argv, cwd });
+  const target = mainWindow ?? stickyWindow;
+  if (!target) return;
+  if (target.isMinimized()) target.restore();
+  target.show();
+  target.focus();
+  mainWindow?.webContents.send('second-instance', { argv, cwd });
 });
 
 app.whenReady().then(async () => {
   const { ensureBroker, brokerRequest } = await import('../core/broker-client.mjs');
-  const { githubContext } = await import('../core/repo-config.mjs');
+  const { inspectRepositoryContext } = await import('../core/repository-context.mjs');
   await ensureBroker();
 
   ipcMain.handle('broker:request', (_event, request) => brokerRequest(request.path, request.options));
   ipcMain.handle('app:context', async () => {
     const context = { cwd: process.cwd(), platform: process.platform };
-    try { context.github = await githubContext(process.cwd()); }
-    catch (error) { context.githubError = error.message; }
+    context.repository = await inspectRepositoryContext(process.cwd());
+    if (context.repository.syncGitHub) {
+      const [owner, repo] = context.repository.githubRepository.split('/');
+      context.github = {
+        owner,
+        repo,
+        ownerType: context.repository.github?.ownerType || 'user',
+        projectOwner: context.repository.github?.owner || owner,
+        projectNumber: Number(context.repository.github?.projectNumber || 0)
+      };
+    } else {
+      context.githubError = `GitHub sync skipped: ${context.repository.syncReason}`;
+    }
     return context;
   });
   ipcMain.handle('sticky:open', async (_event, note = {}) => openSticky(note, brokerRequest));
   ipcMain.handle('sticky:bounds', (event) => BrowserWindow.fromWebContents(event.sender)?.getBounds());
+  ipcMain.handle('window:action', (event, action) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return false;
+    if (action === 'minimize') window.minimize();
+    else if (action === 'hide') window.hide();
+    else return false;
+    return true;
+  });
 
   mainWindow = createWindow();
   mainWindow.on('closed', () => { mainWindow = null; });
+  await openSticky({}, brokerRequest);
   app.on('activate', () => { if (!mainWindow) mainWindow = createWindow(); });
 });
 
@@ -60,13 +81,21 @@ function createWindow() {
 }
 
 async function openSticky(note, brokerRequest) {
-  const saved = await brokerRequest('/v1/notes', { method: 'POST', body: note });
-  if (stickyWindows.has(saved.id)) {
-    stickyWindows.get(saved.id).focus();
+  const saved = await brokerRequest('/v1/notes', { method: 'POST', body: {
+    ...note,
+    id: 'codex-activity',
+    title: 'Codex 执行便签',
+    width: note.width ?? 380,
+    height: note.height ?? 520,
+    alwaysOnTop: true
+  } });
+  if (stickyWindow && !stickyWindow.isDestroyed()) {
+    stickyWindow.show();
+    stickyWindow.focus();
     return saved;
   }
   const area = screen.getPrimaryDisplay().workArea;
-  const window = new BrowserWindow({
+  stickyWindow = new BrowserWindow({
     x: saved.x ?? area.x + area.width - saved.width - 24,
     y: saved.y ?? area.y + 24,
     width: saved.width,
@@ -86,18 +115,18 @@ async function openSticky(note, brokerRequest) {
       sandbox: true
     }
   });
-  stickyWindows.set(saved.id, window);
-  window.loadFile(path.join(__dirname, 'ui', 'index.html'), { query: { sticky: '1', id: saved.id } });
-  window.on('closed', () => stickyWindows.delete(saved.id));
+  stickyWindow.loadFile(path.join(__dirname, 'ui', 'index.html'), { query: { sticky: 'activity', id: saved.id } });
+  stickyWindow.on('closed', () => { stickyWindow = null; });
   let saveTimer;
   const saveBounds = () => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      const bounds = window.getBounds();
+      if (!stickyWindow || stickyWindow.isDestroyed()) return;
+      const bounds = stickyWindow.getBounds();
       brokerRequest('/v1/notes', { method: 'POST', body: { id: saved.id, ...bounds } }).catch(() => {});
     }, 200);
   };
-  window.on('move', saveBounds);
-  window.on('resize', saveBounds);
+  stickyWindow.on('move', saveBounds);
+  stickyWindow.on('resize', saveBounds);
   return saved;
 }

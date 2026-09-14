@@ -21,3 +21,21 @@ test('persists idempotency and merges partial note updates', async () => {
   }
 });
 
+test('keeps concurrent Codex contexts isolated by context key', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'localboard-contexts-'));
+  const state = new StateDatabase(join(root, 'state.sqlite3'));
+  try {
+    const repository = { cwd: 'C:/repo', isGitRepository: true, syncReason: 'github-not-configured' };
+    state.upsertAgentContext({ contextKey: 'codex:a:main', sessionId: 'a', status: 'active', repository });
+    state.upsertAgentContext({ contextKey: 'codex:b:main', sessionId: 'b', status: 'active', repository });
+    state.upsertAgentContext({ contextKey: 'codex:a:main', sessionId: 'a', status: 'idle', repository });
+    const contexts = state.listAgentContexts();
+    assert.equal(contexts.length, 2);
+    assert.equal(contexts.find((item) => item.sessionId === 'a').status, 'idle');
+    assert.equal(contexts.find((item) => item.sessionId === 'b').status, 'active');
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+

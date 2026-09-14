@@ -26,6 +26,15 @@ export class StateDatabase {
         payload_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS agent_contexts (
+        context_key TEXT PRIMARY KEY,
+        session_id TEXT,
+        agent_id TEXT,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS notes (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -92,6 +101,47 @@ export class StateDatabase {
              event_name AS eventName, cwd, created_at AS createdAt
       FROM agent_events ORDER BY id DESC LIMIT ?
     `).all(Math.max(1, Math.min(500, Number(limit))));
+  }
+
+  upsertAgentContext(context) {
+    if (!context?.contextKey) throw new Error('contextKey is required');
+    if (!context.repository || typeof context.repository !== 'object') throw new Error('repository context is required');
+    const value = {
+      ...context,
+      contextKey: String(context.contextKey),
+      source: String(context.source ?? 'unknown'),
+      status: String(context.status ?? 'active'),
+      updatedAt: new Date().toISOString()
+    };
+    this.db.prepare(`
+      INSERT INTO agent_contexts(context_key,session_id,agent_id,source,status,payload_json,updated_at)
+      VALUES (@contextKey,@sessionId,@agentId,@source,@status,@payloadJson,@updatedAt)
+      ON CONFLICT(context_key) DO UPDATE SET session_id=excluded.session_id,
+        agent_id=excluded.agent_id,source=excluded.source,status=excluded.status,
+        payload_json=excluded.payload_json,updated_at=excluded.updated_at
+    `).run({
+      contextKey: value.contextKey,
+      sessionId: value.sessionId ?? null,
+      agentId: value.agentId ?? null,
+      source: value.source,
+      status: value.status,
+      payloadJson: JSON.stringify(value),
+      updatedAt: value.updatedAt
+    });
+    return value;
+  }
+
+  listAgentContexts(options = {}) {
+    const includeEnded = options.includeEnded !== false;
+    const activeSince = new Date(Date.now() - Number(options.maxAgeHours ?? 24) * 60 * 60 * 1000).toISOString();
+    const rows = includeEnded
+      ? this.db.prepare('SELECT payload_json AS payloadJson FROM agent_contexts ORDER BY updated_at DESC').all()
+      : this.db.prepare("SELECT payload_json AS payloadJson FROM agent_contexts WHERE status != 'ended' AND updated_at >= ? ORDER BY updated_at DESC").all(activeSince);
+    return rows.map((row) => JSON.parse(row.payloadJson));
+  }
+
+  deleteAgentContext(contextKey) {
+    return { deleted: this.db.prepare('DELETE FROM agent_contexts WHERE context_key=?').run(contextKey).changes === 1 };
   }
 
   saveNote(note) {

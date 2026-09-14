@@ -3,10 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { join } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { brokerRequest, ensureBroker } from './core/broker-client.mjs';
 import { findGitRoot } from './core/paths.mjs';
 import { githubContext } from './core/repo-config.mjs';
+import { inspectRepositoryContext } from './core/repository-context.mjs';
+import { publishCodexHook, publishExecutionContext } from './core/context-publisher.mjs';
+import { runPreCommit, runPrePush } from './core/git-hooks.mjs';
 
 const execFileAsync = promisify(execFile);
 const { positionals, options } = parseArgs(process.argv.slice(2));
@@ -29,9 +32,15 @@ async function dispatch(group, command, args, opts) {
   if (group === 'pr') return prCommand(command, args, opts);
   if (group === 'actions') return actionsCommand(command, args, opts);
   if (group === 'note') return noteCommand(command, args, opts);
+  if (group === 'context') return contextCommand(command, opts);
+  if (group === 'hook') return hookCommand();
   if (group === 'events') return brokerRequest(`/v1/events?limit=${Number(opts.limit ?? 100)}`);
   if (group === 'outbox') return brokerRequest(`/v1/outbox${opts.status ? `?status=${encodeURIComponent(opts.status)}` : ''}`);
-  if (group === 'git' && command === 'install') return installGitHooks(await findGitRoot(opts.repo));
+  if (group === 'git') {
+    if (command === 'install') return installGitHooks(await findGitRoot(opts.repo));
+    if (command === 'pre-commit') return runPreCommit(opts.repo);
+    if (command === 'pre-push') return runPrePush(opts.repo);
+  }
   throw new Error(`Unknown command: ${[group, command].filter(Boolean).join(' ')}`);
 }
 
@@ -147,6 +156,33 @@ async function noteCommand(command, args, opts) {
   throw new Error(`Unknown note command: ${command}`);
 }
 
+async function contextCommand(command, opts) {
+  const cwd = opts.cwd || process.cwd();
+  if (command === 'inspect') return inspectRepositoryContext(cwd);
+  if (command === 'publish') return publishExecutionContext({
+    cwd,
+    sessionId: opts.sessionId,
+    agentId: opts.agentId,
+    contextKey: opts.contextKey,
+    source: opts.source ?? 'skill',
+    status: opts.status ?? 'active',
+    model: opts.model
+  });
+  if (command === 'list') return brokerRequest(`/v1/contexts?includeEnded=${opts.includeEnded !== 'false'}`);
+  throw new Error(`Unknown context command: ${command}`);
+}
+
+async function hookCommand() {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  try {
+    await publishCodexHook(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+  } catch {
+    // Lifecycle reporting must not block Codex.
+  }
+  return {};
+}
+
 async function resolveProject(context) {
   if (!context.projectNumber) throw new Error('Project number is not configured; pass --project-number');
   return github({ action: 'project.get', ownerType: context.ownerType, owner: context.projectOwner,
@@ -158,14 +194,16 @@ function github(body) {
 }
 
 async function installGitHooks(repoRoot) {
-  const hooks = join(repoRoot, '.git', 'hooks');
+  const { stdout } = await execFileAsync('git', ['rev-parse', '--git-path', 'hooks'], { cwd: repoRoot, windowsHide: true });
+  const candidate = stdout.trim();
+  const hooks = isAbsolute(candidate) ? candidate : resolve(repoRoot, candidate);
   await mkdir(hooks, { recursive: true });
   const scripts = {
-    'pre-commit': `#!/bin/sh\nroot="$(git rev-parse --show-toplevel)"\nnode "$root/scripts/git-pre-commit.mjs"\n`,
-    'pre-push': `#!/bin/sh\nroot="$(git rev-parse --show-toplevel)"\nnode "$root/scripts/git-pre-push.mjs"\n`
+    'pre-commit': '#!/bin/sh\nlocalboard git pre-commit\n',
+    'pre-push': '#!/bin/sh\nlocalboard git pre-push\n'
   };
   for (const [name, content] of Object.entries(scripts)) {
-    const path = join(hooks, name);
+    const path = resolve(hooks, name);
     await writeFile(path, content, { encoding: 'utf8', flag: 'wx' }).catch((error) => {
       if (error.code === 'EEXIST') throw new Error(`Refusing to overwrite existing hook: ${path}`);
       throw error;
@@ -207,6 +245,7 @@ function help() {
     `  localboard pr list|get|merge\n` +
     `  localboard actions runs|rerun|cancel\n` +
     `  localboard note list|add|remove\n` +
+    `  localboard context inspect|publish|list\n` +
     `  localboard events | outbox | git install | daemon\n\n` +
     `Use --json for machine-readable output and --idempotency-key when retrying a mutation.`;
 }
@@ -223,4 +262,3 @@ function splitList(value) {
 function compact(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
-

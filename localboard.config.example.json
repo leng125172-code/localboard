@@ -1,5 +1,6 @@
 {
   "github": {
+    "enabled": true,
     "owner": "your-user-or-org",
     "ownerType": "user",
     "projectNumber": 1,
@@ -13,4 +14,3 @@
     "actionsReadOnly": true
   }
 }
-
