@@ -56,7 +56,9 @@ export async function ensureBroker() {
   });
   child.unref();
 
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  const timeoutMs = Math.max(1000, Number(process.env.LOCALBOARD_BROKER_START_TIMEOUT_MS || 6000));
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     await sleep(60);
     endpoint = await readEndpoint();
     const candidate = endpoint ? await health(endpoint) : null;

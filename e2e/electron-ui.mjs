@@ -19,9 +19,13 @@ const rootFixtureKey = 'e2e:root-workspace';
 await mkdir(artifacts, { recursive: true });
 await execFileAsync('git', ['init'], { cwd: fixtureRoot, windowsHide: true });
 process.env.LOCALAPPDATA = join(fixtureRoot, 'runtime');
-await publishExecutionContext({ cwd: fixtureRoot, contextKey: fixtureKey, sessionId: 'e2e', source: 'e2e' });
+process.env.LOCALBOARD_BROKER_START_TIMEOUT_MS = '180000';
+const fixtureContext = await publishExecutionContext({ cwd: fixtureRoot, contextKey: fixtureKey, sessionId: 'e2e', source: 'e2e' });
+await brokerRequest(`/v1/projects/${encodeURIComponent(fixtureContext.repository.projectId)}`, { method: 'PATCH', body: { pinned: true } });
 await publishExecutionContext({ cwd: fixtureRoot, contextKey: staleFixtureKey, sessionId: 'e2e-stale', source: 'e2e', status: 'stale' });
 await publishExecutionContext({ cwd: root, contextKey: rootFixtureKey, sessionId: 'e2e-root', source: 'e2e' });
+const seededContexts = await brokerRequest('/v1/contexts?includeEnded=false');
+assert.equal(seededContexts.contexts.some((item) => item.contextKey === staleFixtureKey && item.status === 'stale'), true);
 process.env.LOCALBOARD_E2E_USER_DATA = join(fixtureRoot, 'electron-user-data');
 
 const electronApp = await electron.launch({ args: ['.'], cwd: root, env: { ...process.env, LOCALBOARD_DISABLE_SINGLE_INSTANCE: '1' } });
@@ -29,17 +33,33 @@ const pageErrors = [];
 try {
   const main = await findWindow(electronApp, (page) => page.locator('.nav').count());
   main.on('pageerror', (error) => pageErrors.push(error.message));
-  await main.locator('#page-title').waitFor({ state: 'visible' });
+  await main.waitForFunction(() => document.querySelector('#page-title')?.textContent === '仓库待办' && !document.querySelector('#view .loading'));
   await main.screenshot({ path: resolve(artifacts, 'navigation-initial.png') });
 
-  assert.equal(await main.locator('#page-title').textContent(), '个人待办');
+  assert.equal(await main.locator('.app-titlebar').count(), 1);
+  assert.equal(await main.locator('.lb-icon').count() > 8, true);
+  assert.equal(await main.locator('#page-title').textContent(), '仓库待办');
   assert.equal(await main.locator('.nav button.active').count(), 1);
   assert.equal(await main.locator('.nav button[aria-current="page"]').count(), 1);
   assert.equal(await main.locator('[data-project-path]').count(), 2);
-  assert.equal(await main.locator('[data-todo-scope="global"]').count(), 1);
-  await main.locator('[data-todo-scope="global"]').click();
+  const nativeMainAtLaunch = await electronApp.browserWindow(main);
+  assert.equal(await nativeMainAtLaunch.evaluate((window) => window.isMenuBarVisible()), false);
+  await main.locator('#toggle-project-pane').click();
+  await main.waitForFunction(() => document.querySelector('.shell')?.classList.contains('project-pane-expanded'));
+  await main.locator('#project-search').fill(fixtureName);
+  await main.waitForFunction(() => document.querySelectorAll('[data-project-path]').length === 1);
+  assert.equal(await main.locator('[data-project-path]').count(), 1);
+  await main.locator('#project-search').fill('');
+  await main.screenshot({ path: resolve(artifacts, 'navigation-project-pane.png') });
+  await main.locator('#toggle-project-pane').click();
+  await main.waitForFunction(() => !document.querySelector('.shell')?.classList.contains('project-pane-expanded'));
+  assert.equal(await main.locator('#global-todos-entry .lb-icon').count(), 1);
+  await main.locator('#global-todos-entry').click();
+  await main.waitForFunction(() => document.querySelector('.shell')?.classList.contains('global-workspace'));
+  assert.equal(await main.locator('.sidebar').isVisible(), false);
+  assert.equal(await main.locator('.todo-scope-tabs').count(), 0);
   await main.waitForFunction(() => document.querySelector('.scope-banner strong')?.textContent === '全局个人待办');
-  assert.equal(await main.locator('[data-todo-scope="global"]').getAttribute('aria-selected'), 'true');
+  await main.screenshot({ path: resolve(artifacts, 'navigation-global-todos.png') });
   await main.locator('#add-todo').click();
   await main.locator('.dialog input[name="title"]').fill('E2E 全局待办');
   await main.locator('.dialog button.primary').click();
@@ -53,8 +73,21 @@ try {
   main.once('dialog', (dialog) => dialog.accept());
   await editedGlobalTodo.locator('[data-remove-todo]').click();
   await editedGlobalTodo.waitFor({ state: 'detached' });
-  await main.locator('[data-todo-scope="repository"]').click();
+  await main.locator('[data-project-path]').evaluateAll((buttons, target) => {
+    const button = buttons.find((item) => item.dataset.projectPath.toLowerCase() === target.toLowerCase());
+    if (!button) throw new Error(`Project button not found: ${target}`);
+    button.click();
+  }, root);
   await main.waitForFunction(() => document.querySelector('.scope-banner strong')?.textContent === '当前仓库待办');
+
+  await main.locator('[data-tab="settings"]').click();
+  await main.locator('.settings-stack').waitFor();
+  assert.equal(await main.locator('[name="theme"]').inputValue(), 'system');
+  await main.locator('[name="theme"]').selectOption('dark');
+  await main.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  await main.screenshot({ path: resolve(artifacts, 'settings-dark.png') });
+  await main.locator('#reset-settings').click();
+  await main.waitForFunction(() => document.documentElement.dataset.theme === 'system');
 
   await main.locator('[data-tab="git"]').click();
   await main.locator('#git-diff').waitFor();
@@ -71,7 +104,7 @@ try {
   const fixtureRow = main.locator('#view .row').filter({ hasText: fixtureName });
   await fixtureRow.first().locator('[data-switch-workspace]').click();
   await main.waitForFunction((name) => document.querySelector('#workspace-switcher strong')?.textContent === name && !document.querySelector('#view .loading'), fixtureName);
-  assert.equal(await main.locator('#page-title').textContent(), '个人待办');
+  assert.equal(await main.locator('#page-title').textContent(), '仓库待办');
   assert.match(await main.locator('#workspace-switcher').textContent(), /GitHub 未配置/);
   await main.screenshot({ path: resolve(artifacts, 'workspace-switched.png') });
 
@@ -82,7 +115,7 @@ try {
     if (!button) throw new Error(`Project button not found: ${target}`);
     button.click();
   }, root);
-  await main.waitForFunction(() => document.querySelector('#workspace-switcher strong')?.textContent === 'localboard' && document.querySelector('#page-title')?.textContent === '个人待办' && !document.querySelector('#view .loading'));
+  await main.waitForFunction(() => document.querySelector('#workspace-switcher strong')?.textContent === 'localboard' && document.querySelector('#page-title')?.textContent === '仓库待办' && !document.querySelector('#view .loading'));
 
   await main.locator('[data-tab="notes"]').click();
   await main.waitForFunction(() => !document.querySelector('#view .loading'));
@@ -92,10 +125,63 @@ try {
   assert.equal(await sticky.locator('[data-sticky-project]').count(), 2);
   assert.equal(await sticky.locator('[data-sticky-project][aria-selected="true"]').count(), 1);
   const staleDelete = sticky.locator(`[data-remove-context="${staleFixtureKey}"]`);
-  await staleDelete.waitFor({ state: 'visible' });
+  await staleDelete.waitFor({ state: 'attached' });
+  await staleDelete.scrollIntoViewIfNeeded();
   await staleDelete.click();
   await sticky.waitForFunction((key) => !document.querySelector(`[data-remove-context="${key}"]`), staleFixtureKey);
   const nativeSticky = await electronApp.browserWindow(sticky);
+  await sticky.locator('[data-section-toggle="global"]').click();
+  assert.equal(await sticky.locator('[data-section="global"]').getAttribute('class').then((value) => value.includes('collapsed')), true);
+  await sticky.locator('[data-section-toggle="global"]').click();
+  await sticky.locator('[data-resizer="0"]').focus();
+  await sticky.keyboard.press('ArrowDown');
+  const resizerBox = await sticky.locator('[data-resizer="0"]').boundingBox();
+  await sticky.mouse.move(resizerBox.x + resizerBox.width / 2, resizerBox.y + resizerBox.height / 2);
+  await sticky.mouse.down();
+  await sticky.mouse.move(resizerBox.x + resizerBox.width / 2, resizerBox.y + 22, { steps: 4 });
+  await sticky.mouse.up();
+  await sticky.locator('#sticky-more').click();
+  await sticky.locator('[data-preset="small"]').click();
+  await main.waitForTimeout(200);
+  assert.deepEqual(await nativeSticky.evaluate((window) => window.getSize()), [320, 480]);
+  await sticky.locator('[data-preset="medium"]').click();
+  await main.waitForTimeout(200);
+  assert.deepEqual(await nativeSticky.evaluate((window) => window.getSize()), [400, 680]);
+  await sticky.locator('#sticky-more').click();
+  await sticky.locator('#sticky-command-menu').waitFor({ state: 'hidden' });
+  const quickGlobal = sticky.locator('[data-quick-add="global"] input');
+  await quickGlobal.fill('便签快捷新增');
+  await quickGlobal.press('Enter');
+  const quickTodo = sticky.locator('#sticky-global-todos .sticky-todo-row').filter({ hasText: '便签快捷新增' });
+  await quickTodo.waitFor();
+  await quickTodo.locator('[data-global-todo]').click();
+  await sticky.waitForFunction(() => [...document.querySelectorAll('#sticky-global-todos .sticky-todo')].some((item) => item.textContent.includes('便签快捷新增') && item.classList.contains('done')));
+  await quickTodo.locator('[data-open-todo]').click();
+  await main.waitForFunction(() => document.querySelector('#page-title')?.textContent === '全局个人待办' && document.querySelector('.shell')?.classList.contains('global-workspace'));
+  await sticky.screenshot({ path: resolve(artifacts, 'activity-sticky-resized.png') });
+  for (const edge of ['left', 'right', 'top', 'bottom']) {
+    await sticky.evaluate((targetEdge) => window.localboard.stickyWindow('dock', { edge: targetEdge }), edge);
+    assert.equal((await sticky.evaluate(() => window.localboard.stickyWindow('get-state'))).dock.edge, edge);
+    await main.bringToFront();
+    await main.mouse.move(600, 300);
+    await sticky.evaluate(() => window.localboard.stickyPointer(false));
+    await sticky.evaluate(() => window.localboard.stickyWindow('collapse'));
+    await main.waitForTimeout(220);
+    assert.equal((await sticky.evaluate(() => window.localboard.stickyWindow('get-state'))).dock.collapsed, true);
+    await sticky.evaluate(() => window.localboard.stickyWindow('expand'));
+    await main.waitForTimeout(220);
+    assert.equal((await sticky.evaluate(() => window.localboard.stickyWindow('get-state'))).dock.collapsed, false);
+    await sticky.evaluate(() => window.localboard.stickyWindow('undock'));
+  }
+  await sticky.evaluate(() => window.localboard.stickyWindow('dock', { edge: 'right' }));
+  await main.bringToFront();
+  await main.mouse.move(600, 300);
+  await sticky.evaluate(() => window.localboard.stickyWindow('interaction', { active: false }));
+  await sticky.evaluate(() => window.localboard.stickyPointer(false));
+  await sticky.waitForFunction(async () => (await window.localboard.stickyWindow('get-state')).dock.collapsed === true, null, { timeout: 3000 });
+  await sticky.evaluate(() => window.localboard.stickyWindow('expand'));
+  await main.waitForTimeout(220);
+  await sticky.evaluate(() => window.localboard.stickyWindow('undock'));
   await sticky.locator('[data-window-action="minimize"]').click();
   await main.waitForTimeout(150);
   assert.equal(await nativeSticky.evaluate((window) => window.isMinimized()), true);
@@ -104,6 +190,15 @@ try {
   assert.equal(await nativeSticky.evaluate((window) => window.isVisible()), false);
 
   const beforeStickyCount = electronApp.windows().length;
+  await main.locator('[data-project-path]').evaluateAll((buttons, target) => {
+    const button = buttons.find((item) => item.dataset.projectPath.toLowerCase() === target.toLowerCase());
+    if (!button) throw new Error(`Project button not found: ${target}`);
+    button.click();
+  }, root);
+  await main.waitForFunction(() => !document.querySelector('.shell')?.classList.contains('global-workspace')
+    && document.querySelector('#page-title')?.textContent === '仓库待办' && !document.querySelector('#view .loading'));
+  await main.locator('[data-tab="notes"]').click();
+  await main.locator('#open-note').waitFor();
   await main.locator('#open-note').click();
   await main.waitForTimeout(200);
   assert.equal(await nativeSticky.evaluate((window) => window.isVisible()), true);

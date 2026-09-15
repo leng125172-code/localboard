@@ -16,12 +16,15 @@ LocalBoard 不会隐式执行 `git init`、添加 remote、commit 或 push。Cod
 
 ## 主窗口和执行便签
 
-- 第一侧栏只显示 Codex/Agent 上报或用户显式登记、且当前仍存在的工作目录；主窗体浏览路径和自动化测试不会污染项目列表。右键只会从 LocalBoard 列表移除，不会删除磁盘文件。
-- 第二侧栏按项目类型动态显示功能。Git 页面只读取 status/diff，不提供暂存、提交或推送。
-- Git 仓库的“个人待办”页可在“当前仓库 / 全局待办”之间切换，两种范围都支持新增、编辑、完成和删除。
+- 第一侧栏只显示 Codex/Agent 上报或用户显式登记、且当前仍存在的工作目录；支持 WinUI 图标模式、可展开的名称/路径列表、搜索和响应式浮层。主窗体浏览路径和自动化测试不会污染项目列表；右键移除不会删除磁盘文件。
+- 主窗体采用 Fluent/WinUI 桌面壳、Windows 原生窗口按钮、系统明暗主题和可用时的 Mica 材质。第二侧栏按项目类型动态显示功能；Git 页面只读取 status/diff，不提供暂存、提交或推送。
+- 一级项目栏最上方固定为“全局个人待办”，使用计划图标且不显示二级菜单；选择 Git 项目后，二级菜单只维护该仓库待办，不再混入全局待办。
+- 项目身份严格取 Codex 会话启动目录；后续命令进入下级仓库或系统 Temp 目录不会新增/替换项目。
 - GitHub 仓库通过已认证的 `gh` 访问。账户未登录、过期或与仓库绑定账户不匹配时显示登录、切换和刷新入口，不保存 token，也不会静默切换账户。
 - LocalBoard 状态页显示 broker、项目、Codex/Agent 连接数、主/子 Agent 和执行状态，以及 Hook/Skill/MCP/插件安装结果。
-- 唯一的 Codex 执行便签依次显示 Agent 活动、全局待办、仓库待办 Tab、Markdown/清单便签；仓库 Tab 用于切换并查看每个仓库的个人待办。便签支持颜色、字号、置顶、跨 Windows 虚拟桌面显示、隐藏和自动保存。
+- 唯一的 Codex 执行便签依次显示 Agent 活动、全局待办、仓库待办 Tab、Markdown/清单便签；仓库 Tab 用于切换并查看每个仓库的个人待办。四个分区可拖动调整或折叠，全局/仓库待办支持快捷新增与完成。
+- 便签支持小/中/大尺寸预设和自由缩放，可吸附到任意屏幕的顶、底、左、右边缘；离开后收缩为状态细条，悬停自动展开。窗口、分区和吸附状态会持久保存并在显示器变化后恢复到可见区域。
+- 设置页集中管理主题、Mica、开机启动、关闭到托盘、项目栏和便签吸附参数。
 - PR 合并、Actions 重跑/取消均要求界面二次确认；对应 CLI 仍要求 `--yes`。
 
 ## 开发运行
@@ -92,7 +95,7 @@ npm run dist:windows
 |---|---|---|
 | 全局待办 | `%LOCALAPPDATA%\LocalBoard\data\global-todos.json` | 否 |
 | 仓库待办 | `<worktree>\.localboard\todos.json` | 是 |
-| 项目注册、gh 账户绑定、收藏、缓存、outbox、Agent 状态、便签 | `%LOCALAPPDATA%\LocalBoard\state.sqlite3` | 否 |
+| 项目注册、gh 账户绑定、收藏、缓存、outbox、Agent 状态、便签布局与应用设置 | `%LOCALAPPDATA%\LocalBoard\state.sqlite3` | 否 |
 | broker 端点 | `%LOCALAPPDATA%\LocalBoard\broker.json` | 否 |
 
 broker 仅监听 `127.0.0.1` 并使用随机 bearer token；所有写入由单 broker 串行处理，重试使用幂等键。LocalBoard 不提供远程遥测。

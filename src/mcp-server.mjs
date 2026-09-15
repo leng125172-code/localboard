@@ -60,7 +60,7 @@ async function dispatch(message) {
   if (message.method === 'initialize') return {
     protocolVersion: message.params?.protocolVersion || '2025-03-26',
     capabilities: { tools: { listChanged: false } },
-    serverInfo: { name: 'localboard', version: '0.3.1' }
+    serverInfo: { name: 'localboard', version: '0.4.0' }
   };
   if (message.method === 'ping') return {};
   if (message.method === 'tools/list') return { tools };

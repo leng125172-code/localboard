@@ -13,7 +13,8 @@ Sticky windows ──────────────────┘       �
                                         └── gh CLI ── GitHub API
 ```
 
-- Desktop 用 Electron 的 `requestSingleInstanceLock` 防止重复应用；第二次启动只聚焦已有窗口。托盘进程支持开机静默启动。应用内部只维护一个固定 ID 为 `codex-activity` 的执行便签，置顶和跨虚拟桌面显示可分别切换。
+- Desktop 用 Electron 的 `requestSingleInstanceLock` 防止重复应用；第二次启动只聚焦已有窗口。主窗口使用隐藏标题栏和 Windows Window Controls Overlay，Windows 11 支持时启用 Mica，不支持时回退纯色。托盘进程支持开机静默启动。
+- 应用内部只维护一个固定 ID 为 `codex-activity` 的执行便签。主进程维护四边吸附状态机，按显示器 work area 保存展开矩形、收缩边缘和 12px 可见把手；指针、焦点和编辑交互会阻止误收缩。便签分区比例、折叠状态和尺寸预设持久化在 SQLite。
 - 项目注册与路径查看分离：Codex/Agent 上报和显式 CLI 登记才写入项目表；Desktop 切换或查看目录只做上下文检查。项目列表还会隐藏已经不存在的工作目录，E2E 使用隔离的运行时目录。
 - broker 用原子目录锁保证每个 OS 用户只有一个 owner。PID 存活检查、5 秒创建宽限期和健康检查共同处理并发启动、崩溃残锁与 PID 复用。
 - UI 和 broker 解耦。关闭 UI 不终止后台服务；多个 Codex 进程只做客户端。broker 健康响应带协议版本，升级时客户端只终止已通过 bearer 健康检查确认的旧 LocalBoard broker。
@@ -57,5 +58,5 @@ Sticky windows ──────────────────┘       �
 - 不保存 token，复用 `gh` 的凭据存储与权限模型。
 - broker 只绑定 loopback，每次安装生成 256-bit 随机 bearer token。正式发行版还应在 Windows 对 endpoint 文件设置当前用户 ACL，在 Unix 强制 0600。
 - repo 路径和 Hook 输入都视为不可信；子进程使用参数数组且 `shell=false`。Hook stdout 只输出合法空 JSON，不把 transcript 或 secret 注入模型上下文。
-- SQLite 保存项目注册、账户绑定、收藏、审计事件、每会话仓库上下文、便签、outbox、缓存与幂等结果。应增加保留期、导出和清理策略，避免无限增长。
+- SQLite 保存项目注册、账户绑定、收藏、审计事件、每会话仓库上下文、便签、应用设置、outbox、缓存与幂等结果。设置和便签 JSON 均经过结构验证并兼容旧数据；仍应增加保留期、导出和清理策略，避免无限增长。
 - GitHub API 需尊重 primary/secondary rate limits；重试应使用指数退避、抖动和 `Retry-After`，权限/验证错误不自动重试。

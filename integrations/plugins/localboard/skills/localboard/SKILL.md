@@ -5,7 +5,7 @@ description: Report the current agent execution to LocalBoard and manage global 
 
 # LocalBoard
 
-At the beginning of LocalBoard work, call `localboard_report_context` with the actual current working directory. Update the same execution with `waiting` or `ended` when appropriate.
+At the beginning of LocalBoard work, call `localboard_report_context` with the exact Codex session launch directory. Never replace it with a nested repository or temporary directory used by an individual command. Update the same execution with `waiting` or `ended` when appropriate.
 
 Use the MCP todo tools instead of editing `.localboard/todos.json` directly:
 

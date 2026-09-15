@@ -21,6 +21,18 @@ test('broker is a single writer and replays an idempotent mutation', async () =>
     assert.equal(first.todos.length, 1);
     assert.equal(second.todos.length, 1);
     assert.equal(second.replayed, true);
+    const defaults = await brokerRequest('/v1/settings', { endpoint: broker.endpoint });
+    assert.equal(defaults.settings.theme, 'system');
+    assert.equal(defaults.settings.sticky.snapDistance, 16);
+    const patched = await brokerRequest('/v1/settings', {
+      endpoint: broker.endpoint, method: 'PATCH', body: { theme: 'light', sticky: { collapseDelay: 1200 } }
+    });
+    assert.equal(patched.settings.theme, 'light');
+    assert.equal(patched.settings.sticky.collapseDelay, 1200);
+    assert.equal(patched.settings.sticky.handleWidth, 12);
+    const reset = await brokerRequest('/v1/settings', { endpoint: broker.endpoint, method: 'DELETE' });
+    assert.equal(reset.settings.theme, 'system');
+    assert.equal(reset.settings.sticky.collapseDelay, 700);
     await assert.rejects(() => brokerRequest('/v1/github', {
       endpoint: broker.endpoint, method: 'POST', body: { action: 'issue.list', owner: 'me', repo: 'repo' }
     }), /localRepoRoot is required/);

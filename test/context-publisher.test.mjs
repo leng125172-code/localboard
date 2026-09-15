@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { publishExecutionContext } from '../src/core/context-publisher.mjs';
+import { publishCodexHook, publishExecutionContext } from '../src/core/context-publisher.mjs';
 
 test('manual skill publications use distinct keys and cannot overwrite another Codex instance', async () => {
   const published = [];
@@ -23,4 +23,17 @@ test('uses the Codex session environment as a stable isolated context key', asyn
   const second = await publishExecutionContext({ cwd: 'C:/two' }, options);
   assert.equal(first.contextKey, 'codex:session-a:main');
   assert.equal(second.contextKey, first.contextKey);
+});
+
+test('only SessionStart hook events register a project-switcher entry', async () => {
+  const published = [];
+  const brokerRequest = async (path, options) => {
+    if (path === '/v1/contexts') published.push(options.body);
+    return options.body;
+  };
+  const repositoryOptions = { run: async () => { throw new Error('not a repository'); } };
+  await publishCodexHook({ hook_event_name: 'SessionStart', session_id: 'session-a', cwd: 'C:/repo' }, { brokerRequest, repositoryOptions });
+  await publishCodexHook({ hook_event_name: 'UserPromptSubmit', session_id: 'session-a', cwd: 'C:/Temp/tool-run' }, { brokerRequest, repositoryOptions });
+  assert.equal(published[0].registerProject, true);
+  assert.equal(published[1].registerProject, false);
 });

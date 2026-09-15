@@ -58,6 +58,19 @@ export async function startBroker() {
       if (request.method === 'GET' && url.pathname === '/v1/projects') {
         return send(response, 200, { projects: state.listProjects() });
       }
+      if (request.method === 'GET' && url.pathname === '/v1/settings') {
+        return send(response, 200, { settings: state.getSettings() });
+      }
+      if (request.method === 'PATCH' && url.pathname === '/v1/settings') {
+        const settings = await serialize(async () => state.patchSettings(await readJson(request)));
+        broadcast(streamClients, 'settings', settings);
+        return send(response, 200, { settings });
+      }
+      if (request.method === 'DELETE' && url.pathname === '/v1/settings') {
+        const settings = await serialize(async () => state.resetSettings());
+        broadcast(streamClients, 'settings', settings);
+        return send(response, 200, { settings });
+      }
       if (request.method === 'POST' && url.pathname === '/v1/projects/register') {
         const body = await readJson(request);
         const context = body.register === false
@@ -112,7 +125,7 @@ export async function startBroker() {
         const body = await readJson(request);
         const value = await serialize(async () => {
           const saved = state.upsertAgentContext(body);
-          state.upsertProject(body.repository);
+          if (body.registerProject !== false) state.upsertProject(saved.repository);
           return saved;
         });
         broadcast(streamClients, 'agents', value);

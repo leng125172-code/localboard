@@ -1,7 +1,23 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+
+export const DEFAULT_SETTINGS = Object.freeze({
+  theme: 'system',
+  mica: true,
+  autoStart: true,
+  closeToTray: true,
+  projectPaneExpanded: false,
+  sticky: Object.freeze({
+    snapDistance: 16,
+    collapseDelay: 700,
+    handleWidth: 12,
+    defaultPreset: 'medium',
+    reduceMotion: false
+  })
+});
 
 export class StateDatabase {
   constructor(path) {
@@ -76,11 +92,19 @@ export class StateDatabase {
         created_at TEXT NOT NULL,
         last_seen_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
     ensureColumn(this.db, 'notes', 'visible', 'INTEGER NOT NULL DEFAULT 1');
     ensureColumn(this.db, 'notes', 'desktop_pinned', 'INTEGER NOT NULL DEFAULT 0');
     ensureColumn(this.db, 'notes', 'font_size', 'INTEGER NOT NULL DEFAULT 14');
+    ensureColumn(this.db, 'notes', 'layout_json', "TEXT NOT NULL DEFAULT '{}'");
+    ensureColumn(this.db, 'notes', 'dock_json', "TEXT NOT NULL DEFAULT '{}'");
     ensureColumn(this.db, 'projects', 'reported_by_agent', 'INTEGER NOT NULL DEFAULT 0');
+    this.initializeSettings();
     this.db.exec(`
       UPDATE projects
       SET reported_by_agent=1
@@ -122,6 +146,45 @@ export class StateDatabase {
     return { deleted: this.db.prepare('DELETE FROM github_cache').run().changes };
   }
 
+  initializeSettings() {
+    const insert = this.db.prepare('INSERT OR IGNORE INTO settings(key,value_json,updated_at) VALUES (?,?,?)');
+    const now = new Date().toISOString();
+    for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) insert.run(key, JSON.stringify(value), now);
+  }
+
+  getSettings() {
+    const values = cloneJson(DEFAULT_SETTINGS);
+    for (const row of this.db.prepare('SELECT key,value_json AS valueJson FROM settings').all()) {
+      if (!Object.hasOwn(DEFAULT_SETTINGS, row.key)) continue;
+      let parsed;
+      try { parsed = JSON.parse(row.valueJson); } catch { continue; }
+      values[row.key] = normalizeSetting(row.key, parsed, values[row.key]);
+    }
+    return values;
+  }
+
+  patchSettings(patch = {}) {
+    if (!isRecord(patch)) throw new Error('settings patch must be an object');
+    const current = this.getSettings();
+    const entries = Object.entries(patch).filter(([key]) => Object.hasOwn(DEFAULT_SETTINGS, key));
+    const write = this.db.prepare(`
+      INSERT INTO settings(key,value_json,updated_at) VALUES (?,?,?)
+      ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at
+    `);
+    const now = new Date().toISOString();
+    for (const [key, value] of entries) {
+      const normalized = normalizeSetting(key, value, current[key]);
+      write.run(key, JSON.stringify(normalized), now);
+    }
+    return this.getSettings();
+  }
+
+  resetSettings() {
+    this.db.exec('DELETE FROM settings');
+    this.initializeSettings();
+    return this.getSettings();
+  }
+
   recordAgentEvent(payload, eventKey) {
     const result = this.db.prepare(`
       INSERT OR IGNORE INTO agent_events(event_key, session_id, turn_id, event_name, cwd, payload_json, created_at)
@@ -149,8 +212,13 @@ export class StateDatabase {
   upsertAgentContext(context) {
     if (!context?.contextKey) throw new Error('contextKey is required');
     if (!context.repository || typeof context.repository !== 'object') throw new Error('repository context is required');
+    const previousRow = this.db.prepare('SELECT payload_json AS payloadJson FROM agent_contexts WHERE context_key=?').get(String(context.contextKey));
+    const previous = previousRow ? parseJsonObject(previousRow.payloadJson, null) : null;
+    const repository = previous?.repository && !sameLaunchDirectory(previous.repository, context.repository)
+      ? previous.repository : context.repository;
     const value = {
       ...context,
+      repository,
       contextKey: String(context.contextKey),
       source: String(context.source ?? 'unknown'),
       status: String(context.status ?? 'active'),
@@ -254,7 +322,8 @@ export class StateDatabase {
       favorite_projects_json AS favoriteProjectsJson,created_at AS createdAt,last_seen_at AS lastSeenAt
       FROM projects WHERE reported_by_agent=1 AND (pinned=1 OR last_seen_at>=?) ORDER BY pinned DESC,last_seen_at DESC`).all(cutoff)
       .map(projectRow)
-      .filter((project) => existsSync(project.repoRoot ?? project.cwd));
+      .filter((project) => existsSync(project.repoRoot ?? project.cwd))
+      .filter((project) => options.includeTemporary === true || project.pinned || !isTemporaryProjectPath(project.repoRoot ?? project.cwd));
   }
 
   getProject(projectId) {
@@ -282,7 +351,8 @@ export class StateDatabase {
   saveNote(note) {
     const existing = note.id ? this.db.prepare(`
       SELECT id,title,body,color,x,y,width,height,always_on_top AS alwaysOnTop,visible,
-             desktop_pinned AS desktopPinned,font_size AS fontSize,updated_at AS updatedAt
+             desktop_pinned AS desktopPinned,font_size AS fontSize,layout_json AS layoutJson,
+             dock_json AS dockJson,updated_at AS updatedAt
       FROM notes WHERE id=?
     `).get(note.id) : null;
     const now = new Date().toISOString();
@@ -300,25 +370,29 @@ export class StateDatabase {
       visible: (note.visible ?? Boolean(existing?.visible ?? true)) ? 1 : 0,
       desktopPinned: (note.desktopPinned ?? Boolean(existing?.desktopPinned ?? false)) ? 1 : 0,
       fontSize: Math.max(11, Math.min(24, Number(note.fontSize ?? existing?.fontSize ?? 14))),
+      layoutJson: JSON.stringify(normalizeJsonObject(note.layout ?? note.layoutJson, parseJsonObject(existing?.layoutJson))),
+      dockJson: JSON.stringify(normalizeJsonObject(note.dock ?? note.dockJson, parseJsonObject(existing?.dockJson))),
       updatedAt: now
     };
     this.db.prepare(`
-      INSERT INTO notes(id,title,body,color,x,y,width,height,always_on_top,visible,desktop_pinned,font_size,updated_at)
-      VALUES (@id,@title,@body,@color,@x,@y,@width,@height,@alwaysOnTop,@visible,@desktopPinned,@fontSize,@updatedAt)
+      INSERT INTO notes(id,title,body,color,x,y,width,height,always_on_top,visible,desktop_pinned,font_size,layout_json,dock_json,updated_at)
+      VALUES (@id,@title,@body,@color,@x,@y,@width,@height,@alwaysOnTop,@visible,@desktopPinned,@fontSize,@layoutJson,@dockJson,@updatedAt)
       ON CONFLICT(id) DO UPDATE SET title=excluded.title, body=excluded.body,
         color=excluded.color, x=excluded.x, y=excluded.y, width=excluded.width,
         height=excluded.height, always_on_top=excluded.always_on_top,visible=excluded.visible,
-        desktop_pinned=excluded.desktop_pinned,font_size=excluded.font_size,updated_at=excluded.updated_at
+        desktop_pinned=excluded.desktop_pinned,font_size=excluded.font_size,layout_json=excluded.layout_json,
+        dock_json=excluded.dock_json,updated_at=excluded.updated_at
     `).run(value);
-    return { ...value, alwaysOnTop: Boolean(value.alwaysOnTop), visible: Boolean(value.visible), desktopPinned: Boolean(value.desktopPinned) };
+    return noteRow(value);
   }
 
   listNotes() {
     return this.db.prepare(`
       SELECT id,title,body,color,x,y,width,height,always_on_top AS alwaysOnTop,visible,
-             desktop_pinned AS desktopPinned,font_size AS fontSize,updated_at AS updatedAt
+             desktop_pinned AS desktopPinned,font_size AS fontSize,layout_json AS layoutJson,
+             dock_json AS dockJson,updated_at AS updatedAt
       FROM notes ORDER BY updated_at DESC
-    `).all().map((note) => ({ ...note, alwaysOnTop: Boolean(note.alwaysOnTop), visible: Boolean(note.visible), desktopPinned: Boolean(note.desktopPinned) }));
+    `).all().map(noteRow);
   }
 
   deleteNote(id) {
@@ -383,4 +457,76 @@ function projectRow(row) {
     createdAt: row.createdAt,
     lastSeenAt: row.lastSeenAt
   };
+}
+
+function noteRow(note) {
+  const { layoutJson, dockJson, ...value } = note;
+  return {
+    ...value,
+    alwaysOnTop: Boolean(note.alwaysOnTop),
+    visible: Boolean(note.visible),
+    desktopPinned: Boolean(note.desktopPinned),
+    layout: parseJsonObject(layoutJson),
+    dock: parseJsonObject(dockJson)
+  };
+}
+
+function normalizeSetting(key, value, fallback) {
+  if (key === 'theme') return ['system', 'light', 'dark'].includes(value) ? value : fallback;
+  if (['mica', 'autoStart', 'closeToTray', 'projectPaneExpanded'].includes(key)) {
+    return typeof value === 'boolean' ? value : fallback;
+  }
+  if (key === 'sticky') {
+    if (!isRecord(value)) return fallback;
+    return {
+      snapDistance: boundedNumber(value.snapDistance, fallback.snapDistance, 0, 64),
+      collapseDelay: boundedNumber(value.collapseDelay, fallback.collapseDelay, 0, 10_000),
+      handleWidth: boundedNumber(value.handleWidth, fallback.handleWidth, 4, 48),
+      defaultPreset: ['small', 'medium', 'large'].includes(value.defaultPreset) ? value.defaultPreset : fallback.defaultPreset,
+      reduceMotion: typeof value.reduceMotion === 'boolean' ? value.reduceMotion : fallback.reduceMotion
+    };
+  }
+  return fallback;
+}
+
+function boundedNumber(value, fallback, minimum, maximum) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, number)) : fallback;
+}
+
+function normalizeJsonObject(value, fallback = {}) {
+  if (value === undefined) return cloneJson(fallback);
+  const parsed = typeof value === 'string' ? parseJsonObject(value, null) : value;
+  if (!isRecord(parsed)) return cloneJson(fallback);
+  try { return JSON.parse(JSON.stringify(parsed)); } catch { return cloneJson(fallback); }
+}
+
+function parseJsonObject(value, fallback = {}) {
+  if (typeof value !== 'string') return cloneJson(fallback);
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : cloneJson(fallback);
+  } catch {
+    return cloneJson(fallback);
+  }
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isTemporaryProjectPath(value) {
+  if (typeof value !== 'string' || !value) return false;
+  const fromTemp = relative(resolve(tmpdir()), resolve(value));
+  return fromTemp === '' || (!fromTemp.startsWith('..') && !isAbsolute(fromTemp));
+}
+
+function sameLaunchDirectory(left, right) {
+  if (!left?.cwd || !right?.cwd) return false;
+  const normalize = (value) => process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value);
+  return normalize(left.cwd) === normalize(right.cwd);
 }

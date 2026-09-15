@@ -2,6 +2,8 @@ const api = window.localboard;
 const app = document.querySelector('#app');
 const query = new URLSearchParams(location.search);
 let applicationState;
+const icons = window.LocalBoardIcons;
+const icon = (name, options) => icons?.icon(name, options) || '';
 
 if (query.get('sticky') === 'activity') renderActivitySticky(query.get('id'));
 else renderApplication();
@@ -9,20 +11,36 @@ else renderApplication();
 async function renderApplication() {
   const startupWorkspace = query.get('cwd');
   const savedWorkspace = startupWorkspace || localStorage.getItem('localboard.workspace');
-  let context = await api.context(savedWorkspace || undefined);
-  const registry = await api.request('/v1/projects');
+  const [context, registry, settingsResponse] = await Promise.all([
+    api.context(savedWorkspace || undefined),
+    api.request('/v1/projects'),
+    api.request('/v1/settings').catch(() => ({ settings: defaultSettings() }))
+  ]);
   applicationState = {
     context,
     projects: registry.projects,
+    settings: { ...defaultSettings(), ...(settingsResponse.settings || settingsResponse) },
     active: 'todos',
-    todoScope: context.repository.isGitRepository ? 'repository' : 'global',
+    globalSelected: !context.repository.isGitRepository,
     loadId: 0
   };
+  applyAppearance(applicationState.settings);
   app.innerHTML = `
-    <div class="shell">
+    <header class="app-titlebar">
+      <button class="titlebar-button" id="toggle-project-pane" type="button" aria-label="展开或收起项目栏" title="展开或收起项目栏 (Ctrl+Shift+P)">${icon('menu')}</button>
+      <div class="titlebar-brand"><span class="mini-brand">LB</span><span>LocalBoard</span></div>
+      <div class="titlebar-drag"></div>
+    </header>
+    <div class="shell ${applicationState.settings.projectPaneExpanded ? 'project-pane-expanded' : ''} ${applicationState.globalSelected ? 'global-workspace' : ''}">
       <aside class="project-rail">
-        <div class="brand-mark" title="LocalBoard">LB</div>
-        <div class="project-list" id="project-list"></div>
+        <div class="project-rail-head"><div class="project-rail-title"><strong>项目</strong><small>Codex 启动目录</small></div></div>
+        <label class="project-search">${icon('search')}<input id="project-search" type="search" placeholder="搜索项目" aria-label="搜索项目" /></label>
+        <button class="project-button global-project-button" id="global-todos-entry" type="button" title="全局个人待办">
+          <span class="selection-indicator"></span><span class="global-project-avatar">${icon('todo')}</span>
+          <span class="project-copy"><strong>全局个人待办</strong><small>所有工作区共用</small></span>
+        </button>
+        <div class="project-rail-divider" aria-hidden="true"></div>
+        <div class="project-list" id="project-list" role="listbox" aria-label="项目"></div>
       </aside>
       <aside class="sidebar">
         <div class="brand"><div><strong>LocalBoard</strong><small id="project-kind"></small></div></div>
@@ -30,14 +48,30 @@ async function renderApplication() {
         <button class="connection" id="service-status"><span class="dot"></span><span>本地服务</span><strong id="agent-count">0</strong></button>
       </aside>
       <main class="content">
-        <header class="topbar"><div><div class="eyebrow">当前工作区</div><h1 id="page-title">个人待办</h1></div><button class="repo-pill" id="workspace-switcher" type="button" title="查看并切换 Codex 仓库"></button></header>
+        <header class="topbar"><div><div class="eyebrow" id="workspace-eyebrow">当前工作区</div><h1 id="page-title">个人待办</h1></div><button class="repo-pill" id="workspace-switcher" type="button" title="查看并切换 Codex 仓库"></button></header>
         <div id="error"></div><section id="view"></section>
       </main>
     </div>`;
+  document.querySelector('#toggle-project-pane').onclick = toggleProjectPane;
+  document.querySelector('#project-search').addEventListener('input', refreshProjectChrome);
+  document.addEventListener('keydown', (event) => {
+    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'p') {
+      event.preventDefault();
+      toggleProjectPane();
+    }
+  });
   await refreshProjectChrome();
   document.querySelector('#workspace-switcher').addEventListener('click', () => navigate('status'));
   document.querySelector('#service-status').addEventListener('click', () => navigate('status'));
   api.onSecondInstance(({ cwd }) => switchWorkspace(cwd));
+  api.onStickyNavigate?.(({ cwd, tab = 'todos', scope = 'repository' }) => {
+    const navigateAfterSwitch = async () => {
+      if (scope === 'global') return selectGlobalTodos();
+      if (cwd && applicationState.context.cwd.toLowerCase() !== cwd.toLowerCase()) await switchWorkspace(cwd);
+      await navigate(tab, { scope });
+    };
+    navigateAfterSwitch().catch(showError);
+  });
   const pendingStartup = await api.ready();
   if (pendingStartup?.cwd) return switchWorkspace(pendingStartup.cwd);
   await navigate('todos');
@@ -47,7 +81,7 @@ async function navigate(tab, options = {}) {
   const state = applicationState;
   state.active = tab;
   const loadId = ++state.loadId;
-  const titles = { todos: '个人待办', git: '源代码管理', project: 'GitHub Project', issues: 'Issues', prs: 'Pull Requests', actions: 'Actions', agents: 'Codex / Agents', notes: '执行便签', status: 'LocalBoard 状态' };
+  const titles = { todos: applicationState.globalSelected ? '全局个人待办' : '仓库待办', git: '源代码管理', project: 'GitHub Project', issues: 'Issues', prs: 'Pull Requests', actions: 'Actions', agents: 'Codex / Agents', notes: '执行便签', status: 'LocalBoard 状态', settings: '设置' };
   document.querySelector('#page-title').textContent = titles[tab];
   document.querySelectorAll('[data-tab]').forEach((button) => {
     const active = button.dataset.tab === tab;
@@ -76,29 +110,22 @@ async function load(tab, context, loadId, options) {
   if (tab === 'issues') return await loadIssues(context, loadId, options);
   if (tab === 'prs') return await loadPullRequests(context, loadId, options);
   if (tab === 'actions') return await loadActions(context, loadId, options);
+  if (tab === 'settings') return await loadSettings(loadId);
 }
 
 async function loadTodos(context, loadId, options = {}) {
   const repository = context.repository;
-  const scope = repository.isGitRepository && (options.scope || applicationState.todoScope) !== 'global'
-    ? 'repository' : 'global';
-  applicationState.todoScope = scope;
+  const scope = applicationState.globalSelected ? 'global' : 'repository';
+  if (scope === 'repository' && !repository.isGitRepository) throw new Error('非 Git 启动目录没有仓库待办，请使用一级栏的全局个人待办。');
   const query = new URLSearchParams({ scope });
   if (scope === 'repository') query.set('projectId', repository.projectId);
   const data = await api.request(`/v1/todos?${query}`);
   const view = currentView(loadId);
   if (!view) return;
   const storageText = scope === 'repository' ? `${repository.repoRoot}\\.localboard\\todos.json` : 'LocalBoard 应用数据目录（全局）';
-  view.innerHTML = `${repository.isGitRepository ? `<div class="todo-scope-tabs" role="tablist" aria-label="待办范围">
-      <button role="tab" data-todo-scope="repository" class="${scope === 'repository' ? 'active' : ''}" aria-selected="${scope === 'repository'}">当前仓库</button>
-      <button role="tab" data-todo-scope="global" class="${scope === 'global' ? 'active' : ''}" aria-selected="${scope === 'global'}">全局待办</button>
-    </div>` : ''}
-    <div class="scope-banner"><strong>${scope === 'repository' ? '当前仓库待办' : '全局个人待办'}</strong><span>保存于 ${escapeHtml(storageText)}</span></div>
+  view.innerHTML = `<div class="scope-banner"><strong>${scope === 'repository' ? '当前仓库待办' : '全局个人待办'}</strong><span>保存于 ${escapeHtml(storageText)}</span></div>
     <div class="toolbar"><button class="primary" id="add-todo">新建待办</button><button class="secondary" id="refresh">刷新</button></div>
     <div class="grid">${data.todos.length ? data.todos.map(todoCard).join('') : `<div class="empty">还没有${scope === 'repository' ? '当前仓库' : '全局'}待办。</div>`}</div>`;
-  document.querySelectorAll('[data-todo-scope]').forEach((button) => {
-    button.onclick = () => navigate('todos', { scope: button.dataset.todoScope });
-  });
   document.querySelector('#add-todo').onclick = () => todoDialog(context, scope);
   document.querySelector('#refresh').onclick = () => navigate('todos', { scope });
   document.querySelectorAll('[data-done]').forEach((button) => button.onclick = async () => {
@@ -162,11 +189,21 @@ async function refreshProjectChrome() {
   applicationState.projects = data.projects;
   const current = applicationState.context.repository;
   const list = document.querySelector('#project-list');
-  list.innerHTML = data.projects.map((project) => {
-    const active = project.projectId === current.projectId;
+  const filter = document.querySelector('#project-search')?.value.trim().toLowerCase() || '';
+  const projects = data.projects.filter((project) => !filter || `${project.repositoryName} ${project.repoRoot || project.cwd}`.toLowerCase().includes(filter));
+  const globalEntry = document.querySelector('#global-todos-entry');
+  globalEntry.classList.toggle('active', applicationState.globalSelected);
+  globalEntry.setAttribute('aria-current', applicationState.globalSelected ? 'page' : 'false');
+  globalEntry.onclick = selectGlobalTodos;
+  list.innerHTML = projects.map((project) => {
+    const active = !applicationState.globalSelected && project.projectId === current.projectId;
     const initials = (project.repositoryName || 'P').slice(0, 2).toUpperCase();
-    return `<button class="project-button ${active ? 'active' : ''}" data-project-id="${escapeHtml(project.projectId)}" data-project-path="${escapeHtml(project.repoRoot || project.cwd)}" title="${escapeHtml(project.repositoryName)}\n${escapeHtml(project.repoRoot || project.cwd)}\n右键移除"><span>${project.pinned ? '★' : escapeHtml(initials)}</span>${project.syncGitHub ? '<i></i>' : ''}</button>`;
-  }).join('');
+    const projectKind = project.syncGitHub ? 'GitHub' : project.isGitRepository ? 'Git' : '本地目录';
+    return `<button class="project-button ${active ? 'active' : ''}" role="option" aria-selected="${active}" data-project-id="${escapeHtml(project.projectId)}" data-project-path="${escapeHtml(project.repoRoot || project.cwd)}" title="${escapeHtml(project.repositoryName)}\n${escapeHtml(project.repoRoot || project.cwd)}\n右键移除">
+      <span class="selection-indicator"></span><span class="project-avatar">${escapeHtml(initials)}<i class="project-state ${project.syncGitHub ? 'connected' : ''}"></i></span>
+      <span class="project-copy"><strong>${escapeHtml(project.repositoryName)}</strong><small>${projectKind} · ${escapeHtml(project.repoRoot || project.cwd)}</small></span>
+      ${project.pinned ? `<span class="project-pin" title="已收藏">${icon('pin')}</span>` : ''}</button>`;
+  }).join('') || `<div class="project-filter-empty">没有匹配的项目</div>`;
   list.querySelectorAll('[data-project-path]').forEach((button) => {
     button.onclick = () => switchWorkspace(button.dataset.projectPath);
     button.oncontextmenu = async (event) => {
@@ -184,16 +221,16 @@ async function refreshProjectChrome() {
 function renderFeatureNavigation() {
   const repository = applicationState.context.repository;
   const entries = [
-    ['todos', '个人待办'],
-    ...(repository.isGitRepository ? [['git', '源代码管理']] : []),
+    ...(repository.isGitRepository ? [['todos', '仓库待办', 'todo']] : []),
+    ...(repository.isGitRepository ? [['git', '源代码管理', 'branch']] : []),
     ...(repository.githubConfigured ? [
-      ['project', 'GitHub Projects'], ['issues', 'Issues'], ['prs', 'Pull Requests'], ['actions', 'Actions']
+      ['project', 'GitHub Projects', 'board'], ['issues', 'Issues', 'issue'], ['prs', 'Pull Requests', 'pull-request'], ['actions', 'Actions', 'play']
     ] : []),
-    ['agents', 'Codex / Agents'], ['notes', '执行便签']
+    ['agents', 'Codex / Agents', 'robot'], ['notes', '执行便签', 'note'], ['settings', '设置', 'settings']
   ];
   const nav = document.querySelector('#feature-nav');
   document.querySelector('#project-kind').textContent = repository.projectKind === 'github' ? 'GitHub 仓库' : repository.projectKind === 'git' ? '本地 Git 仓库' : '非 Git 路径';
-  nav.innerHTML = `<div class="workspace-actions"><button data-project-pin>${repository.pinned ? '★ 已收藏项目' : '☆ 收藏此项目'}</button></div>` + entries.map(([tab, label]) => `<button data-tab="${tab}" class="${applicationState.active === tab ? 'active' : ''}">${label}</button>`).join('') + githubAuthPanel(repository);
+  nav.innerHTML = `<div class="workspace-actions"><button data-project-pin>${icon(repository.pinned ? 'unpin' : 'pin')}<span>${repository.pinned ? '取消收藏项目' : '收藏此项目'}</span></button></div>` + entries.map(([tab, label, glyph]) => `<button data-tab="${tab}" class="${applicationState.active === tab ? 'active' : ''}">${icon(glyph)}<span>${label}</span></button>`).join('') + githubAuthPanel(repository);
   nav.querySelectorAll('[data-tab]').forEach((button) => button.onclick = () => navigate(button.dataset.tab));
   nav.querySelector('[data-project-pin]').onclick = async () => {
     applicationState.context.repository = await api.request(`/v1/projects/${encodeURIComponent(repository.projectId)}`, {
@@ -299,6 +336,82 @@ async function loadNotes(loadId) {
       await navigate('notes');
     };
   });
+}
+
+async function loadSettings(loadId) {
+  const response = await api.request('/v1/settings');
+  if (!currentView(loadId)) return;
+  applicationState.settings = { ...defaultSettings(), ...response.settings, sticky: { ...defaultSettings().sticky, ...response.settings?.sticky } };
+  const settings = applicationState.settings;
+  document.querySelector('#view').innerHTML = `<div class="settings-stack">
+    <section class="settings-group"><div><h2>外观</h2><p>跟随 Windows 个性化设置，并在支持时使用 Mica 背景。</p></div>
+      <label class="setting-row"><span><strong>应用主题</strong><small>系统、浅色或深色</small></span><select name="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+      <label class="setting-row"><span><strong>Mica 材质</strong><small>不支持时自动使用纯色背景</small></span><input type="checkbox" name="mica" /></label>
+    </section>
+    <section class="settings-group"><div><h2>应用行为</h2><p>控制启动方式与主窗口关闭后的行为。</p></div>
+      <label class="setting-row"><span><strong>开机自动启动</strong><small>后台启动 Broker 与托盘</small></span><input type="checkbox" name="autoStart" /></label>
+      <label class="setting-row"><span><strong>关闭到托盘</strong><small>关闭主窗体后继续接收 Agent 上报</small></span><input type="checkbox" name="closeToTray" /></label>
+    </section>
+    <section class="settings-group"><div><h2>执行便签</h2><p>调整吸附灵敏度、收缩速度和默认尺寸。</p></div>
+      <label class="setting-row"><span><strong>吸附距离</strong><small><output data-output="snapDistance">${settings.sticky.snapDistance}px</output></small></span><input type="range" name="snapDistance" min="0" max="64" step="1" value="${settings.sticky.snapDistance}" /></label>
+      <label class="setting-row"><span><strong>收缩延时</strong><small><output data-output="collapseDelay">${settings.sticky.collapseDelay}ms</output></small></span><input type="range" name="collapseDelay" min="0" max="3000" step="100" value="${settings.sticky.collapseDelay}" /></label>
+      <label class="setting-row"><span><strong>边缘把手</strong><small><output data-output="handleWidth">${settings.sticky.handleWidth}px</output></small></span><input type="range" name="handleWidth" min="4" max="32" step="1" value="${settings.sticky.handleWidth}" /></label>
+      <label class="setting-row"><span><strong>默认尺寸</strong><small>下次新建便签时使用</small></span><select name="defaultPreset"><option value="small">小 · 320 × 480</option><option value="medium">中 · 400 × 680</option><option value="large">大 · 520 × 820</option></select></label>
+      <label class="setting-row"><span><strong>减少动画</strong><small>立即完成展开和收缩</small></span><input type="checkbox" name="reduceMotion" /></label>
+    </section>
+    <div class="settings-actions"><button class="secondary" id="reset-settings">${icon('refresh')}恢复默认设置</button><span id="settings-saved" role="status"></span></div>
+  </div>`;
+  const view = document.querySelector('#view');
+  for (const name of ['theme', 'mica', 'autoStart', 'closeToTray']) {
+    const control = view.querySelector(`[name="${name}"]`);
+    if (control.type === 'checkbox') control.checked = Boolean(settings[name]);
+    else control.value = settings[name];
+  }
+  for (const name of ['snapDistance', 'collapseDelay', 'handleWidth', 'defaultPreset', 'reduceMotion']) {
+    const control = view.querySelector(`[name="${name}"]`);
+    if (control.type === 'checkbox') control.checked = Boolean(settings.sticky[name]);
+    else control.value = settings.sticky[name];
+  }
+  view.querySelectorAll('input, select').forEach((control) => {
+    control.addEventListener(control.type === 'range' ? 'input' : 'change', async () => {
+      const isSticky = ['snapDistance', 'collapseDelay', 'handleWidth', 'defaultPreset', 'reduceMotion'].includes(control.name);
+      const value = control.type === 'checkbox' ? control.checked : control.type === 'range' ? Number(control.value) : control.value;
+      if (control.type === 'range') view.querySelector(`[data-output="${control.name}"]`).textContent = `${value}${control.name === 'collapseDelay' ? 'ms' : 'px'}`;
+      const patch = isSticky ? { sticky: { [control.name]: value } } : { [control.name]: value };
+      const saved = await api.request('/v1/settings', { method: 'PATCH', body: patch });
+      applicationState.settings = saved.settings;
+      applyAppearance(saved.settings);
+      const status = view.querySelector('#settings-saved');
+      status.textContent = '已保存';
+      setTimeout(() => { if (status.isConnected) status.textContent = ''; }, 1200);
+    });
+  });
+  view.querySelector('#reset-settings').onclick = async () => {
+    const reset = await api.request('/v1/settings', { method: 'DELETE' });
+    applicationState.settings = reset.settings;
+    applyAppearance(reset.settings);
+    await loadSettings(loadId);
+  };
+}
+
+function defaultSettings() {
+  return { theme: 'system', mica: true, autoStart: true, closeToTray: true, projectPaneExpanded: false,
+    sticky: { snapDistance: 16, collapseDelay: 700, handleWidth: 12, defaultPreset: 'medium', reduceMotion: false } };
+}
+
+function applyAppearance(settings) {
+  document.documentElement.dataset.theme = settings.theme || 'system';
+  document.documentElement.classList.toggle('reduce-motion', Boolean(settings.sticky?.reduceMotion));
+  api.applyAppearance?.(settings);
+}
+
+async function toggleProjectPane() {
+  const shell = document.querySelector('.shell');
+  const expanded = !shell.classList.contains('project-pane-expanded');
+  shell.classList.toggle('project-pane-expanded', expanded);
+  const saved = await api.request('/v1/settings', { method: 'PATCH', body: { projectPaneExpanded: expanded } });
+  applicationState.settings = saved.settings;
+  (expanded ? document.querySelector('#project-search') : document.querySelector('#toggle-project-pane'))?.focus();
 }
 
 async function loadProject(context, loadId, options) {
@@ -577,15 +690,23 @@ async function switchWorkspace(cwd) {
     const context = await api.context(cwd);
     if (switchId !== applicationState.loadId) return;
     applicationState.context = context;
-    applicationState.todoScope = context.repository.isGitRepository ? 'repository' : 'global';
+    applicationState.globalSelected = false;
+    document.querySelector('.shell').classList.remove('global-workspace');
     localStorage.setItem('localboard.workspace', context.cwd);
     await refreshProjectChrome();
-    await navigate('todos');
+    await navigate(context.repository.isGitRepository ? 'todos' : 'agents');
   } catch (error) {
     if (switchId !== applicationState.loadId) return;
     showError(error);
     document.querySelector('#view').innerHTML = `<div class="empty">无法切换到该仓库：${escapeHtml(error.message)}</div>`;
   }
+}
+
+async function selectGlobalTodos() {
+  applicationState.globalSelected = true;
+  document.querySelector('.shell').classList.add('global-workspace');
+  await refreshProjectChrome();
+  await navigate('todos', { scope: 'global' });
 }
 
 function updateWorkspacePill() {
@@ -594,31 +715,81 @@ function updateWorkspacePill() {
   const name = repository.repositoryName || '非 Git 路径';
   const detail = `${repository.branch || repository.syncReason}${repository.isLinkedWorktree ? ' · worktree' : ''}`;
   const button = document.querySelector('#workspace-switcher');
+  const eyebrow = document.querySelector('#workspace-eyebrow');
+  if (applicationState.globalSelected) {
+    eyebrow.textContent = '个人空间';
+    button.hidden = true;
+    return;
+  }
+  eyebrow.textContent = '当前工作区';
+  button.hidden = false;
   button.title = `${context.cwd}\n点击查看并切换 Codex 仓库`;
   button.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${escapeHtml(detail)} · ${escapeHtml(syncLabel(repository))}</span>`;
 }
 
 async function renderActivitySticky(id) {
-  const data = await api.request('/v1/notes');
+  const [data, settingsResponse] = await Promise.all([api.request('/v1/notes'), api.request('/v1/settings').catch(() => ({ settings: defaultSettings() }))]);
   const note = data.notes.find((item) => item.id === id);
   if (!note) return app.textContent = '便签不存在';
+  const settings = { ...defaultSettings(), ...(settingsResponse.settings || {}), sticky: { ...defaultSettings().sticky, ...(settingsResponse.settings?.sticky || {}) } };
+  const sectionIds = ['agents', 'global', 'repository', 'memo'];
+  const defaultRatios = [.30, .17, .23, .30];
+  const layout = {
+    preset: note.layout?.preset || settings.sticky.defaultPreset,
+    sectionRatios: normalizeRatios(note.layout?.sectionRatios, defaultRatios),
+    collapsedSections: Array.isArray(note.layout?.collapsedSections) ? note.layout.collapsedSections.filter((item) => sectionIds.includes(item)) : []
+  };
   document.body.style.background = note.color;
-  app.innerHTML = `<div class="sticky" style="background:${escapeHtml(note.color)};font-size:${note.fontSize}px"><div class="sticky-head"><span>${escapeHtml(note.title)}</span><div class="sticky-window-actions">
-      <button type="button" data-sticky-toggle="alwaysOnTop" class="${note.alwaysOnTop ? 'selected' : ''}" title="置顶">↑</button>
-      <button type="button" data-sticky-toggle="desktopPinned" class="${note.desktopPinned ? 'selected' : ''}" title="钉在所有虚拟桌面">◆</button>
-      <button type="button" data-font="down" title="缩小字号">A−</button><button type="button" data-font="up" title="放大字号">A+</button>
-      <input type="color" id="sticky-color" value="${escapeHtml(note.color)}" title="便签颜色" />
-      <button type="button" data-window-action="minimize" title="最小化" aria-label="最小化">−</button><button type="button" data-window-action="hide" title="隐藏；可从主窗口再次打开" aria-label="隐藏">×</button></div></div>
-    <div class="sticky-scroll">
-      <section><h2>1. Codex 执行 <span id="sticky-agent-count"></span></h2><div class="sticky-contexts" id="sticky-contexts"></div></section>
-      <section><h2>2. 全局个人待办</h2><div id="sticky-global-todos"></div></section>
-      <section><h2>3. 仓库待办</h2><div class="bookmark-tabs" id="sticky-bookmarks" role="tablist" aria-label="切换仓库待办"></div><div id="sticky-repo-todos"></div></section>
-      <section class="memo"><h2>4. 便签</h2><textarea aria-label="共享便签内容" placeholder="支持 Markdown 与 - [ ] 清单；Codex 不会覆盖这里">${escapeHtml(note.body)}</textarea></section>
-    </div><div class="sticky-foot">本地保存 · 自动保存 · 多会话隔离</div></div>`;
+  app.innerHTML = `<div class="sticky" data-edge="${escapeHtml(note.dock?.edge || '')}" data-collapsed="${Boolean(note.dock?.collapsed)}" style="background:${escapeHtml(note.color)};font-size:${note.fontSize}px;--sticky-color:${escapeHtml(note.color)};--dock-handle:${Number(note.dock?.exposedStrip || settings.sticky.handleWidth)}px">
+    <div class="edge-handle" aria-hidden="true"><i></i></div>
+    <div class="sticky-head"><span class="sticky-title">${icon('note')}${escapeHtml(note.title)}</span><div class="sticky-window-actions">
+      <button type="button" data-sticky-toggle="alwaysOnTop" class="${note.alwaysOnTop ? 'selected' : ''}" title="置顶" aria-label="置顶">${icon('pin')}</button>
+      <button type="button" data-sticky-toggle="desktopPinned" class="${note.desktopPinned ? 'selected' : ''}" title="显示在所有虚拟桌面" aria-label="显示在所有虚拟桌面">${icon('desktop')}</button>
+      <button type="button" id="sticky-more" title="便签设置" aria-label="便签设置" aria-expanded="false">${icon('more')}</button>
+      <button type="button" data-window-action="minimize" title="最小化" aria-label="最小化">${icon('minimize')}</button>
+      <button type="button" data-window-action="hide" title="隐藏；可从主窗口再次打开" aria-label="隐藏">${icon('close')}</button></div></div>
+    <div class="sticky-command-menu" id="sticky-command-menu" hidden>
+      <div class="command-label">窗口大小</div><div class="size-presets">${[['small','小'],['medium','中'],['large','大']].map(([value,label]) => `<button data-preset="${value}" class="${layout.preset === value ? 'selected' : ''}">${label}</button>`).join('')}</div>
+      <div class="command-row"><span>字号</span><button data-font="down" title="缩小字号">${icon('text-decrease')}</button><button data-font="up" title="放大字号">${icon('text-increase')}</button></div>
+      <label class="command-row"><span>颜色</span><input type="color" id="sticky-color" value="${escapeHtml(note.color)}" title="便签颜色" /></label>
+      <button class="command-wide" data-sticky-window="undock">${icon('unpin')}解除屏幕吸附</button>
+    </div>
+    <div class="sticky-sections" id="sticky-sections">
+      ${stickySection('agents', `Codex 执行 <span id="sticky-agent-count"></span>`, `<div class="sticky-contexts" id="sticky-contexts"></div>`, layout)}
+      <div class="section-resizer" data-resizer="0" role="separator" aria-orientation="horizontal" tabindex="0"></div>
+      ${stickySection('global', '全局个人待办', `<form class="quick-add" data-quick-add="global"><input aria-label="新增全局待办" placeholder="新增全局待办，按 Enter 保存" /><button title="新增">${icon('add')}</button></form><div id="sticky-global-todos"></div>`, layout)}
+      <div class="section-resizer" data-resizer="1" role="separator" aria-orientation="horizontal" tabindex="0"></div>
+      ${stickySection('repository', '仓库待办', `<div class="bookmark-tabs" id="sticky-bookmarks" role="tablist" aria-label="切换仓库待办"></div><div id="sticky-repo-todos"></div>`, layout)}
+      <div class="section-resizer" data-resizer="2" role="separator" aria-orientation="horizontal" tabindex="0"></div>
+      ${stickySection('memo', '便签', `<textarea aria-label="共享便签内容" placeholder="支持 Markdown 与 - [ ] 清单；Codex 不会覆盖这里">${escapeHtml(note.body)}</textarea>`, layout, 'memo')}
+    </div><div class="sticky-foot"><span>本地保存 · 自动保存</span><span id="sticky-dock-label">${note.dock?.edge ? `已吸附${dockEdgeLabel(note.dock.edge)}` : '自由窗口'}</span></div></div>`;
   const textarea = document.querySelector('textarea');
   let preferences = { ...note };
+  const stickyRoot = document.querySelector('.sticky');
+  const commandMenu = document.querySelector('#sticky-command-menu');
+  const moreButton = document.querySelector('#sticky-more');
+  setSectionGrid(layout);
+  stickyRoot.addEventListener('mouseenter', () => api.stickyPointer?.(true));
+  stickyRoot.addEventListener('mouseleave', () => api.stickyPointer?.(false));
+  stickyRoot.addEventListener('focusin', () => api.stickyWindow?.('interaction', { active: true }));
+  stickyRoot.addEventListener('focusout', () => setTimeout(() => {
+    if (!stickyRoot.contains(document.activeElement)) api.stickyWindow?.('interaction', { active: false });
+  }));
+  moreButton.onclick = () => {
+    const opened = commandMenu.hidden;
+    commandMenu.hidden = !opened;
+    moreButton.setAttribute('aria-expanded', String(opened));
+    api.stickyPointer?.(true);
+  };
   document.querySelectorAll('[data-window-action]').forEach((button) => {
     button.addEventListener('click', () => api.windowAction(button.dataset.windowAction));
+  });
+  document.querySelectorAll('[data-sticky-window]').forEach((button) => button.onclick = () => api.stickyWindow?.(button.dataset.stickyWindow));
+  document.querySelectorAll('[data-preset]').forEach((button) => button.onclick = async () => {
+    layout.preset = button.dataset.preset;
+    document.querySelectorAll('[data-preset]').forEach((item) => item.classList.toggle('selected', item === button));
+    await api.stickyWindow?.('preset', { preset: layout.preset });
+    await persistStickyLayout(note.id, layout);
   });
   document.querySelectorAll('[data-sticky-toggle]').forEach((button) => button.onclick = async () => {
     const key = button.dataset.stickyToggle;
@@ -634,8 +805,20 @@ async function renderActivitySticky(id) {
   document.querySelector('#sticky-color').oninput = async (event) => {
     preferences = await api.stickyPreferences({ color: event.target.value });
     document.querySelector('.sticky').style.background = preferences.color;
+    document.querySelector('.sticky').style.setProperty('--sticky-color', preferences.color);
     document.body.style.background = preferences.color;
   };
+  document.querySelectorAll('[data-section-toggle]').forEach((button) => button.onclick = async () => {
+    const sectionId = button.dataset.sectionToggle;
+    const collapsed = layout.collapsedSections.includes(sectionId);
+    layout.collapsedSections = collapsed ? layout.collapsedSections.filter((item) => item !== sectionId) : [...layout.collapsedSections, sectionId];
+    document.querySelector(`[data-section="${sectionId}"]`).classList.toggle('collapsed', !collapsed);
+    button.setAttribute('aria-expanded', String(collapsed));
+    button.innerHTML = icon(collapsed ? 'chevron-up' : 'chevron-down');
+    setSectionGrid(layout);
+    await persistStickyLayout(note.id, layout);
+  });
+  installSectionResizers(layout, note.id);
   let selectedStickyProjectId = null;
   const refreshSticky = async () => {
     try {
@@ -645,9 +828,16 @@ async function renderActivitySticky(id) {
         api.request('/v1/projects')
       ]);
       document.querySelector('#sticky-agent-count').textContent = contexts.contexts.length ? `· ${contexts.contexts.length}` : '';
+      stickyRoot.dataset.agentState = contexts.contexts.some((item) => item.status === 'active') ? 'active'
+        : contexts.contexts.some((item) => item.status === 'interrupted') ? 'error'
+          : contexts.contexts.length ? 'idle' : 'offline';
       document.querySelector('#sticky-contexts').innerHTML = contexts.contexts.length ? contexts.contexts.map(contextCard).join('')
         : '<div class="sticky-empty">等待 Codex 上报执行路径…</div>';
-      document.querySelector('#sticky-global-todos').innerHTML = todos.todos.length ? todos.todos.slice(0, 8).map((todo) => `<button class="sticky-todo ${todo.status}" data-global-todo="${todo.id}"><span>${todo.status === 'done' ? '✓' : '○'}</span>${escapeHtml(todo.title)}</button>`).join('') : '<div class="sticky-empty">暂无全局待办</div>';
+      document.querySelector('#sticky-global-todos').innerHTML = todos.todos.length ? todos.todos.slice(0, 8).map((todo) => stickyTodo(todo, 'global')).join('') : '<div class="sticky-empty">暂无全局待办</div>';
+      document.querySelectorAll('#sticky-global-todos [data-open-todo]').forEach((button) => button.onclick = async (event) => {
+        event.stopPropagation();
+        await api.stickyWindow?.('open-main', { tab: 'todos', scope: 'global' });
+      });
       const summaries = await Promise.all(projects.projects.filter((project) => project.isGitRepository).slice(0, 12).map(async (project) => {
         const repoTodos = await api.request(`/v1/todos?scope=repository&projectId=${encodeURIComponent(project.projectId)}`).catch(() => ({ todos: [] }));
         return { project, todos: repoTodos.todos };
@@ -664,9 +854,9 @@ async function renderActivitySticky(id) {
         const selected = summaries.find(({ project }) => project.projectId === selectedStickyProjectId);
         const host = document.querySelector('#sticky-repo-todos');
         if (!selected) return host.innerHTML = '';
-        host.innerHTML = selected.todos.length
-          ? selected.todos.slice(0, 10).map((todo) => `<button class="sticky-todo ${todo.status}" data-repo-todo="${escapeHtml(todo.id)}"><span>${todo.status === 'done' ? '✓' : '○'}</span>${escapeHtml(todo.title)}</button>`).join('')
-          : '<div class="sticky-empty compact">该仓库暂无个人待办</div>';
+        host.innerHTML = `<form class="quick-add" data-quick-add="repository"><input aria-label="新增仓库待办" placeholder="新增到 ${escapeHtml(selected.project.repositoryName)}" /><button title="新增">${icon('add')}</button></form>` + (selected.todos.length
+          ? selected.todos.slice(0, 10).map((todo) => stickyTodo(todo, 'repository')).join('')
+          : '<div class="sticky-empty compact">该仓库暂无个人待办</div>');
         host.querySelectorAll('[data-repo-todo]').forEach((button) => button.onclick = async () => {
           const todo = selected.todos.find((item) => item.id === button.dataset.repoTodo);
           await api.request('/v1/todos', { method: 'POST', body: {
@@ -674,6 +864,11 @@ async function renderActivitySticky(id) {
             idempotencyKey: crypto.randomUUID(), patch: { status: todo.status === 'done' ? 'open' : 'done' }
           } });
           await refreshSticky();
+        });
+        installQuickAdd(host.querySelector('[data-quick-add="repository"]'), 'repository', selected.project.projectId, refreshSticky);
+        host.querySelectorAll('[data-open-todo]').forEach((button) => button.onclick = async (event) => {
+          event.stopPropagation();
+          await api.stickyWindow?.('open-main', { cwd: selected.project.repoRoot || selected.project.cwd, tab: 'todos', scope: 'repository' });
         });
       };
       tabs.querySelectorAll('[data-sticky-project]').forEach((button) => button.onclick = () => {
@@ -698,6 +893,7 @@ async function renderActivitySticky(id) {
           idempotencyKey: crypto.randomUUID(), patch: { status: todo.status === 'done' ? 'open' : 'done' } } });
         await refreshSticky();
       });
+      installQuickAdd(document.querySelector('[data-quick-add="global"]'), 'global', null, refreshSticky);
     } catch {}
   };
   await refreshSticky();
@@ -710,7 +906,98 @@ async function renderActivitySticky(id) {
       preferences = await api.request('/v1/notes', { method: 'POST', body: { id: note.id, ...bounds, body: textarea.value } });
     }, 300);
   });
+  api.onStickyDockChanged?.((dock) => {
+    preferences.dock = dock;
+    stickyRoot.dataset.edge = dock.edge || '';
+    stickyRoot.dataset.collapsed = String(Boolean(dock.collapsed));
+    stickyRoot.style.setProperty('--dock-handle', `${Number(dock.exposedStrip || 12)}px`);
+    document.querySelector('#sticky-dock-label').textContent = dock.edge ? `已吸附${dockEdgeLabel(dock.edge)}` : '自由窗口';
+  });
 }
+
+function stickySection(id, title, body, layout, extraClass = '') {
+  const collapsed = layout.collapsedSections.includes(id);
+  return `<section class="sticky-section ${extraClass} ${collapsed ? 'collapsed' : ''}" data-section="${id}"><header><h2>${title}</h2><button data-section-toggle="${id}" aria-label="折叠或展开${title}" aria-expanded="${!collapsed}">${icon(collapsed ? 'chevron-up' : 'chevron-down')}</button></header><div class="section-content">${body}</div></section>`;
+}
+
+function stickyTodo(todo, scope) {
+  const dataAttribute = scope === 'global' ? 'data-global-todo' : 'data-repo-todo';
+  return `<div class="sticky-todo-row"><button class="sticky-todo ${escapeHtml(todo.status)}" ${dataAttribute}="${escapeHtml(todo.id)}"><span>${todo.status === 'done' ? icon('check') : icon('circle')}</span><b>${escapeHtml(todo.title)}</b></button><button class="todo-open" data-open-todo="${escapeHtml(todo.id)}" title="在主窗口编辑" aria-label="在主窗口编辑">${icon('edit')}</button></div>`;
+}
+
+function installQuickAdd(form, scope, projectId, refresh) {
+  if (!form || form.dataset.bound) return;
+  form.dataset.bound = 'true';
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const input = form.querySelector('input');
+    const title = input.value.trim();
+    if (!title) return;
+    input.disabled = true;
+    await api.request('/v1/todos', { method: 'POST', body: { scope, projectId, operation: 'add', idempotencyKey: crypto.randomUUID(), todo: { title } } });
+    input.value = '';
+    await refresh();
+  };
+}
+
+function normalizeRatios(value, fallback) {
+  if (!Array.isArray(value) || value.length !== 4 || value.some((item) => !Number.isFinite(Number(item)) || Number(item) <= 0)) return [...fallback];
+  const total = value.reduce((sum, item) => sum + Number(item), 0);
+  return value.map((item) => Number(item) / total);
+}
+
+function setSectionGrid(layout) {
+  const grid = document.querySelector('#sticky-sections');
+  if (!grid) return;
+  const rows = [];
+  ['agents', 'global', 'repository', 'memo'].forEach((section, index) => {
+    rows.push(layout.collapsedSections.includes(section) ? '36px' : `minmax(${section === 'memo' ? 72 : 54}px, ${layout.sectionRatios[index]}fr)`);
+    if (index < 3) rows.push('5px');
+  });
+  grid.style.gridTemplateRows = rows.join(' ');
+}
+
+function installSectionResizers(layout, noteId) {
+  document.querySelectorAll('[data-resizer]').forEach((resizer) => {
+    const adjust = async (delta) => {
+      const index = Number(resizer.dataset.resizer);
+      const grid = document.querySelector('#sticky-sections');
+      const sections = [...grid.querySelectorAll('.sticky-section')];
+      const first = sections[index].getBoundingClientRect().height;
+      const second = sections[index + 1].getBoundingClientRect().height;
+      const total = first + second;
+      const nextFirst = Math.max(54, Math.min(total - 54, first + delta));
+      const pairRatio = layout.sectionRatios[index] + layout.sectionRatios[index + 1];
+      layout.sectionRatios[index] = pairRatio * nextFirst / total;
+      layout.sectionRatios[index + 1] = pairRatio - layout.sectionRatios[index];
+      layout.collapsedSections = layout.collapsedSections.filter((item) => item !== sections[index].dataset.section && item !== sections[index + 1].dataset.section);
+      sections[index].classList.remove('collapsed');
+      sections[index + 1].classList.remove('collapsed');
+      setSectionGrid(layout);
+    };
+    resizer.onpointerdown = (event) => {
+      event.preventDefault();
+      api.stickyPointer?.(true);
+      resizer.setPointerCapture(event.pointerId);
+      let lastY = event.clientY;
+      resizer.onpointermove = (move) => { const delta = move.clientY - lastY; lastY = move.clientY; adjust(delta); };
+      resizer.onpointerup = async () => { resizer.onpointermove = null; await persistStickyLayout(noteId, layout); };
+    };
+    resizer.ondblclick = async () => { layout.sectionRatios = [.30, .17, .23, .30]; setSectionGrid(layout); await persistStickyLayout(noteId, layout); };
+    resizer.onkeydown = async (event) => {
+      if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      await adjust(event.key === 'ArrowUp' ? -12 : 12);
+      await persistStickyLayout(noteId, layout);
+    };
+  });
+}
+
+async function persistStickyLayout(noteId, layout) {
+  await api.request('/v1/notes', { method: 'POST', body: { id: noteId, layout } });
+}
+
+function dockEdgeLabel(edge) { return ({ left: '左侧', right: '右侧', top: '顶部', bottom: '底部' })[edge] || ''; }
 
 function contextRow(context) {
   const repo = context.repository;

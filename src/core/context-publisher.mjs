@@ -19,6 +19,7 @@ export async function publishExecutionContext(input = {}, options = {}) {
     status: input.status ?? 'active',
     eventName: input.eventName ?? null,
     model: input.model ?? null,
+    registerProject: input.registerProject !== false,
     repository
   };
   return request('/v1/contexts', { method: 'POST', body: value, timeoutMs: 3500 });
@@ -40,7 +41,10 @@ export async function publishCodexHook(payload, options = {}) {
       source: 'codex-hook',
       status,
       eventName: payload.hook_event_name,
-      model: payload.model
+      model: payload.model,
+      // Turn-level tools can run from temporary directories. Only the session
+      // launch directory belongs in the project switcher.
+      registerProject: payload.hook_event_name === 'SessionStart'
     }, options)
   ]);
   return { event, context };
