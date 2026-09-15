@@ -30,6 +30,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-LocalBoard.ps1
 - 合并配置到 `%CODEX_HOME%\hooks.json`、启用 `config.toml` 的 hooks，并安装用户级 LocalBoard Skill；不会覆盖其他 Hook 或 Codex 设置。
 - 创建桌面和开始菜单快捷方式。手动启动默认打开个人待办仓库；Codex Desktop/CLI 的 `SessionStart` 也会启动，Electron 与 broker 两层单实例锁防止重复进程和重复便签。
 - 默认在“文档”目录创建 `LocalBoard\personal-todos`，初始化 Git/LocalBoard Hook，并在所选个人 GitHub 账户下创建私有的 `localboard-personal-todos` 仓库后完成首次 push。
+- 创建或复用同名的私有 `LocalBoard Personal Tasks` GitHub Project，将其关联到待办仓库，并自动写入 `projectNumber`，安装后可直接打开 Project 页面。
 
 如果 `gh` 尚未登录，安装器会停止并提示执行 `gh auth login --scopes "repo,project,workflow"`。存在多个已登录账户时，交互安装会要求选择个人主账户；无人值守安装必须显式传入，例如：
 

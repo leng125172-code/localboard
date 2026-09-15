@@ -2,6 +2,7 @@
 param(
   [string]$GitHubAccount,
   [string]$RepositoryName = 'localboard-personal-todos',
+  [string]$ProjectTitle = 'LocalBoard Personal Tasks',
   [string]$TodoRoot,
   [string]$InstallRoot,
   [string]$CodexHome,
@@ -44,6 +45,7 @@ function Invoke-Installation {
     $GitHubAccount = Select-GitHubAccount $accounts $GitHubAccount $Unattended
     & gh auth switch --hostname github.com --user $GitHubAccount
     Assert-LastExitCode 'Unable to activate the selected GitHub account.'
+    $projectNumber = Ensure-GitHubProject $GitHubAccount $ProjectTitle
   }
 
   $package = Get-Content (Join-Path $sourceRoot 'package.json') -Raw | ConvertFrom-Json
@@ -72,8 +74,9 @@ function Invoke-Installation {
   Assert-LastExitCode 'Failed to configure Codex Desktop/CLI integration.'
 
   if (-not $SkipGitHub) {
-    Ensure-PersonalTodoRepository $TodoRoot $GitHubAccount $RepositoryName $hookCommand
-    Write-LocalSettings $TodoRoot $GitHubAccount "$GitHubAccount/$RepositoryName"
+    Ensure-PersonalTodoRepository $TodoRoot $GitHubAccount $RepositoryName $projectNumber $hookCommand
+    Ensure-ProjectLink $GitHubAccount $projectNumber "$GitHubAccount/$RepositoryName"
+    Write-LocalSettings $TodoRoot $GitHubAccount "$GitHubAccount/$RepositoryName" $projectNumber
   } elseif (-not (Test-Path -LiteralPath $TodoRoot)) {
     New-Item -ItemType Directory -Path $TodoRoot -Force | Out-Null
   }
@@ -87,6 +90,7 @@ function Invoke-Installation {
     command = $hookCommand
     todoRepository = $TodoRoot
     githubAccount = if ($SkipGitHub) { $null } else { $GitHubAccount }
+    githubProject = if ($SkipGitHub) { $null } else { "$GitHubAccount/$projectNumber" }
     codexHooks = Join-Path $CodexHome 'hooks.json'
     codexSkill = Join-Path $AgentHome 'skills\localboard'
     desktopShortcut = -not $NoShortcuts
@@ -140,6 +144,22 @@ function Select-GitHubAccount($Accounts, [string]$Requested, [switch]$NonInterac
       return [string]$Accounts[$selected - 1]
     }
   }
+}
+
+function Ensure-GitHubProject([string]$Account, [string]$Title) {
+  $json = & gh project list --owner $Account --format json
+  Assert-LastExitCode "Failed to list GitHub Projects for $Account."
+  $projects = @((($json | ConvertFrom-Json).projects) | Where-Object { $_.title -eq $Title -and -not $_.closed })
+  if ($projects.Count -gt 1) { throw "Multiple open GitHub Projects are named '$Title'; rename duplicates before installing." }
+  if ($projects.Count -eq 1) { return [int]$projects[0].number }
+  $createdJson = & gh project create --owner $Account --title $Title --format json
+  Assert-LastExitCode "Failed to create GitHub Project '$Title'."
+  return [int](($createdJson | ConvertFrom-Json).number)
+}
+
+function Ensure-ProjectLink([string]$Account, [int]$ProjectNumber, [string]$Repository) {
+  & gh project link $ProjectNumber --owner $Account --repo $Repository | Out-Null
+  Assert-LastExitCode "Failed to link GitHub Project #$ProjectNumber to $Repository."
 }
 
 function Copy-AppFiles([string]$Source, [string]$Destination) {
@@ -199,7 +219,7 @@ function Add-UserPath([string]$PathToAdd) {
   }
 }
 
-function Ensure-PersonalTodoRepository([string]$Path, [string]$Account, [string]$Name, [string]$Command) {
+function Ensure-PersonalTodoRepository([string]$Path, [string]$Account, [string]$Name, [int]$ProjectNumber, [string]$Command) {
   $fullName = "$Account/$Name"
   $previousPreference = $ErrorActionPreference
   try {
@@ -239,7 +259,7 @@ function Ensure-PersonalTodoRepository([string]$Path, [string]$Account, [string]
   Set-JsonProperty $config.github 'account' $Account
   Set-JsonProperty $config.github 'owner' $Account
   Set-JsonProperty $config.github 'ownerType' 'user'
-  if ($null -eq $config.github.PSObject.Properties['projectNumber']) { Set-JsonProperty $config.github 'projectNumber' 0 }
+  Set-JsonProperty $config.github 'projectNumber' $ProjectNumber
   Set-JsonProperty $config.github 'repositories' ([object[]]@($fullName))
   Write-Utf8File $configPath (($config | ConvertTo-Json -Depth 10) + "`n")
   $readmePath = Join-Path $Path 'README.md'
@@ -297,13 +317,14 @@ function Set-JsonProperty($Object, [string]$Name, $Value) {
   else { $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value }
 }
 
-function Write-LocalSettings([string]$RepositoryPath, [string]$Account, [string]$Repository) {
+function Write-LocalSettings([string]$RepositoryPath, [string]$Account, [string]$Repository, [int]$ProjectNumber) {
   $runtime = Join-Path $env:LOCALAPPDATA 'LocalBoard'
   New-Item -ItemType Directory -Path $runtime -Force | Out-Null
   $settings = [ordered]@{
     defaultTodoRepository = $RepositoryPath
     primaryGitHubAccount = $Account
     personalTodoRepository = $Repository
+    githubProjectNumber = $ProjectNumber
   } | ConvertTo-Json
   Write-Utf8File (Join-Path $runtime 'settings.json') ($settings + "`n")
 }

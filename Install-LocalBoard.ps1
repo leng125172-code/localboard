@@ -2,6 +2,7 @@
 param(
   [string]$GitHubAccount,
   [string]$RepositoryName = 'localboard-personal-todos',
+  [string]$ProjectTitle = 'LocalBoard Personal Tasks',
   [string]$TodoRoot,
   [switch]$NoLaunch
 )
