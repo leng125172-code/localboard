@@ -69,6 +69,7 @@ export class StateDatabase {
         path TEXT UNIQUE NOT NULL,
         kind TEXT NOT NULL,
         payload_json TEXT NOT NULL,
+        reported_by_agent INTEGER NOT NULL DEFAULT 0,
         pinned INTEGER NOT NULL DEFAULT 0,
         github_account TEXT,
         favorite_projects_json TEXT NOT NULL DEFAULT '[]',
@@ -79,6 +80,16 @@ export class StateDatabase {
     ensureColumn(this.db, 'notes', 'visible', 'INTEGER NOT NULL DEFAULT 1');
     ensureColumn(this.db, 'notes', 'desktop_pinned', 'INTEGER NOT NULL DEFAULT 0');
     ensureColumn(this.db, 'notes', 'font_size', 'INTEGER NOT NULL DEFAULT 14');
+    ensureColumn(this.db, 'projects', 'reported_by_agent', 'INTEGER NOT NULL DEFAULT 0');
+    this.db.exec(`
+      UPDATE projects
+      SET reported_by_agent=1
+      WHERE EXISTS (
+        SELECT 1 FROM agent_contexts
+        WHERE source NOT LIKE 'e2e%'
+          AND json_extract(agent_contexts.payload_json, '$.repository.projectId')=projects.project_id
+      );
+    `);
   }
 
   getIdempotent(key) {
@@ -197,11 +208,11 @@ export class StateDatabase {
     return { deleted: this.db.prepare('DELETE FROM agent_contexts WHERE context_key=?').run(contextKey).changes === 1 };
   }
 
-  upsertProject(context) {
+  upsertProject(context, options = {}) {
     if (!context?.projectId || !context?.cwd) throw new Error('projectId and cwd are required');
     const path = context.repoRoot ?? context.cwd;
     const existing = this.db.prepare(`SELECT project_id AS projectId,pinned,github_account AS githubAccount,
-      favorite_projects_json AS favoriteProjectsJson,created_at AS createdAt FROM projects WHERE project_id=? OR path=?
+      favorite_projects_json AS favoriteProjectsJson,reported_by_agent AS reportedByAgent,created_at AS createdAt FROM projects WHERE project_id=? OR path=?
       ORDER BY project_id=? DESC LIMIT 1`).get(context.projectId, path, context.projectId);
     if (existing && existing.projectId !== context.projectId) {
       this.db.prepare('DELETE FROM projects WHERE project_id=?').run(existing.projectId);
@@ -212,19 +223,21 @@ export class StateDatabase {
       pinned: Boolean(existing?.pinned),
       githubAccount: existing?.githubAccount ?? context.expectedGithubAccount ?? null,
       favoriteProjects: existing ? JSON.parse(existing.favoriteProjectsJson) : [],
+      reportedByAgent: Boolean(existing?.reportedByAgent || options.reportedByAgent !== false),
       createdAt: existing?.createdAt ?? now,
       lastSeenAt: now
     };
     this.db.prepare(`
-      INSERT INTO projects(project_id,path,kind,payload_json,pinned,github_account,favorite_projects_json,created_at,last_seen_at)
-      VALUES (@projectId,@path,@kind,@payloadJson,@pinned,@githubAccount,@favoriteProjectsJson,@createdAt,@lastSeenAt)
+      INSERT INTO projects(project_id,path,kind,payload_json,reported_by_agent,pinned,github_account,favorite_projects_json,created_at,last_seen_at)
+      VALUES (@projectId,@path,@kind,@payloadJson,@reportedByAgent,@pinned,@githubAccount,@favoriteProjectsJson,@createdAt,@lastSeenAt)
       ON CONFLICT(project_id) DO UPDATE SET path=excluded.path,kind=excluded.kind,payload_json=excluded.payload_json,
-        last_seen_at=excluded.last_seen_at
+        reported_by_agent=MAX(projects.reported_by_agent,excluded.reported_by_agent),last_seen_at=excluded.last_seen_at
     `).run({
       projectId: value.projectId,
       path,
       kind: value.projectKind,
       payloadJson: JSON.stringify(value),
+      reportedByAgent: value.reportedByAgent ? 1 : 0,
       pinned: value.pinned ? 1 : 0,
       githubAccount: value.githubAccount,
       favoriteProjectsJson: JSON.stringify(value.favoriteProjects),
@@ -239,7 +252,7 @@ export class StateDatabase {
     const cutoff = new Date(Date.now() - maxAgeDays * 86400_000).toISOString();
     return this.db.prepare(`SELECT payload_json AS payloadJson,pinned,github_account AS githubAccount,
       favorite_projects_json AS favoriteProjectsJson,created_at AS createdAt,last_seen_at AS lastSeenAt
-      FROM projects WHERE pinned=1 OR last_seen_at>=? ORDER BY pinned DESC,last_seen_at DESC`).all(cutoff)
+      FROM projects WHERE reported_by_agent=1 AND (pinned=1 OR last_seen_at>=?) ORDER BY pinned DESC,last_seen_at DESC`).all(cutoff)
       .map(projectRow)
       .filter((project) => existsSync(project.repoRoot ?? project.cwd));
   }

@@ -1,6 +1,6 @@
 {
   "name": "localboard",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Local-first GitHub Project companion for humans and coding agents",
   "author": "LocalBoard",

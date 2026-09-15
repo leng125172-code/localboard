@@ -73,3 +73,18 @@ test('hides reported projects after their working directory is removed', async (
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('does not list a path that was only inspected by the desktop', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'localboard-project-source-'));
+  const state = new StateDatabase(join(root, 'state.sqlite3'));
+  try {
+    const project = { projectId: 'path:desktop', projectKind: 'non-git', repositoryName: 'desktop', cwd: root, isGitRepository: false };
+    state.upsertProject(project, { reportedByAgent: false });
+    assert.equal(state.listProjects().length, 0);
+    state.upsertProject(project, { reportedByAgent: true });
+    assert.equal(state.listProjects().length, 1);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
