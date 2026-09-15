@@ -53,10 +53,11 @@ function Invoke-Installation {
   Copy-AppFiles $sourceRoot $releaseRoot
   & npm ci --omit=dev --no-audit --no-fund --prefix $releaseRoot
   Assert-LastExitCode 'Failed to install LocalBoard desktop dependencies.'
+  Ensure-ElectronRuntime $sourceRoot $releaseRoot
 
   $binRoot = Join-Path $InstallRoot 'bin'
   New-Item -ItemType Directory -Path $binRoot -Force | Out-Null
-  Set-Content -LiteralPath (Join-Path $InstallRoot 'current.txt') -Value $releaseRoot -Encoding utf8NoBOM
+  Write-Utf8File (Join-Path $InstallRoot 'current.txt') "$releaseRoot`r`n"
   Write-CommandShim $binRoot
   Write-DesktopLauncher $binRoot $InstallRoot
   if (-not $NoPath) { Add-UserPath $binRoot }
@@ -105,9 +106,18 @@ function Assert-LastExitCode([string]$Message) {
   if ($LASTEXITCODE -ne 0) { throw "$Message (exit code $LASTEXITCODE)" }
 }
 
+function Write-Utf8File([string]$Path, [string]$Content) {
+  [IO.File]::WriteAllText($Path, $Content, [Text.UTF8Encoding]::new($false))
+}
+
 function Get-GitHubAccounts {
-  $json = & gh auth status --json hosts 2>$null
-  if ($LASTEXITCODE -ne 0 -and -not $json) { return @() }
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'SilentlyContinue'
+    $json = & gh auth status --json hosts 2>$null
+    $statusCode = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $previousPreference }
+  if ($statusCode -ne 0 -and -not $json) { return @() }
   $status = $json | ConvertFrom-Json
   return @($status.hosts.'github.com' | Where-Object { $_.state -eq 'success' } | Select-Object -ExpandProperty login -Unique)
 }
@@ -141,6 +151,24 @@ function Copy-AppFiles([string]$Source, [string]$Destination) {
   }
 }
 
+function Ensure-ElectronRuntime([string]$Source, [string]$Release) {
+  $targetElectron = Join-Path $Release 'node_modules\electron'
+  $targetExecutable = Join-Path $targetElectron 'dist\electron.exe'
+  if (Test-Path -LiteralPath $targetExecutable) { return }
+  $sourceElectron = Join-Path $Source 'node_modules\electron'
+  $sourceExecutable = Join-Path $sourceElectron 'dist\electron.exe'
+  if (Test-Path -LiteralPath $sourceExecutable) {
+    Copy-Item -LiteralPath (Join-Path $sourceElectron 'dist') -Destination $targetElectron -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $sourceElectron 'path.txt') -Destination (Join-Path $targetElectron 'path.txt') -Force
+  } else {
+    & node (Join-Path $targetElectron 'install.js')
+    Assert-LastExitCode 'Electron runtime download failed.'
+  }
+  if (-not (Test-Path -LiteralPath $targetExecutable)) {
+    throw "Electron runtime is missing after installation: $targetExecutable"
+  }
+}
+
 function Write-CommandShim([string]$Bin) {
   $content = @'
 @echo off
@@ -157,7 +185,7 @@ param([Parameter(Mandatory=$true)][string]$Repo)
 $release = (Get-Content (Join-Path $PSScriptRoot '..\current.txt') -Raw).Trim()
 & node (Join-Path $release 'src\cli.mjs') start --repo $Repo | Out-Null
 '@
-  Set-Content -LiteralPath (Join-Path $Bin 'Start-LocalBoard.ps1') -Value $content -Encoding utf8NoBOM
+  Write-Utf8File (Join-Path $Bin 'Start-LocalBoard.ps1') $content
 }
 
 function Add-UserPath([string]$PathToAdd) {
@@ -173,8 +201,12 @@ function Add-UserPath([string]$PathToAdd) {
 
 function Ensure-PersonalTodoRepository([string]$Path, [string]$Account, [string]$Name, [string]$Command) {
   $fullName = "$Account/$Name"
-  & gh repo view $fullName --json nameWithOwner *> $null
-  $remoteExists = $LASTEXITCODE -eq 0
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'SilentlyContinue'
+    & gh repo view $fullName --json nameWithOwner *> $null
+    $remoteExists = $LASTEXITCODE -eq 0
+  } finally { $ErrorActionPreference = $previousPreference }
   if (-not (Test-Path -LiteralPath $Path)) {
     New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
     if ($remoteExists) {
@@ -197,22 +229,22 @@ function Ensure-PersonalTodoRepository([string]$Path, [string]$Account, [string]
   New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
   $todosPath = Join-Path $dataRoot 'todos.json'
   if (-not (Test-Path -LiteralPath $todosPath)) {
-    [ordered]@{ schemaVersion = 1; todos = @() } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $todosPath -Encoding utf8NoBOM
+    Write-Utf8File $todosPath (([ordered]@{ schemaVersion = 1; todos = @() } | ConvertTo-Json -Depth 10) + "`n")
   }
   $configPath = Join-Path $dataRoot 'config.json'
   $config = if (Test-Path -LiteralPath $configPath) { Get-Content $configPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
-  if ($config.PSObject.Properties.Name -notcontains 'github') { $config | Add-Member -NotePropertyName github -NotePropertyValue ([pscustomobject]@{}) }
+  if ($null -eq $config.PSObject.Properties['github']) { $config | Add-Member -NotePropertyName github -NotePropertyValue ([pscustomobject]@{}) }
   elseif ($null -eq $config.github) { $config.github = [pscustomobject]@{} }
   Set-JsonProperty $config.github 'enabled' $true
   Set-JsonProperty $config.github 'account' $Account
   Set-JsonProperty $config.github 'owner' $Account
   Set-JsonProperty $config.github 'ownerType' 'user'
-  if ($config.github.PSObject.Properties.Name -notcontains 'projectNumber') { Set-JsonProperty $config.github 'projectNumber' 0 }
+  if ($null -eq $config.github.PSObject.Properties['projectNumber']) { Set-JsonProperty $config.github 'projectNumber' 0 }
   Set-JsonProperty $config.github 'repositories' ([object[]]@($fullName))
-  $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $configPath -Encoding utf8NoBOM
+  Write-Utf8File $configPath (($config | ConvertTo-Json -Depth 10) + "`n")
   $readmePath = Join-Path $Path 'README.md'
   if (-not (Test-Path -LiteralPath $readmePath)) {
-    Set-Content -LiteralPath $readmePath -Value "# Personal todos`n`nManaged by LocalBoard. Personal todo data is stored in ``.localboard/todos.json``.`n" -Encoding utf8NoBOM
+    Write-Utf8File $readmePath "# Personal todos`n`nManaged by LocalBoard. Personal todo data is stored in ``.localboard/todos.json``.`n"
   }
 
   $hookPath = (& git -C $Path rev-parse --git-path hooks).Trim()
@@ -244,8 +276,13 @@ function Ensure-PersonalTodoRepository([string]$Path, [string]$Account, [string]
 }
 
 function Assert-OriginMatches([string]$RepositoryPath, [string]$ExpectedRepository, [bool]$AddWhenMissing) {
-  $origin = & git -C $RepositoryPath remote get-url origin 2>$null
-  if ($LASTEXITCODE -ne 0) {
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'SilentlyContinue'
+    $origin = & git -C $RepositoryPath remote get-url origin 2>$null
+    $statusCode = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $previousPreference }
+  if ($statusCode -ne 0) {
     if ($AddWhenMissing) { & git -C $RepositoryPath remote add origin "https://github.com/$ExpectedRepository.git" }
     return $AddWhenMissing
   }
@@ -256,18 +293,19 @@ function Assert-OriginMatches([string]$RepositoryPath, [string]$ExpectedReposito
 }
 
 function Set-JsonProperty($Object, [string]$Name, $Value) {
-  if ($Object.PSObject.Properties.Name -contains $Name) { $Object.$Name = $Value }
+  if ($null -ne $Object.PSObject.Properties[$Name]) { $Object.$Name = $Value }
   else { $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value }
 }
 
 function Write-LocalSettings([string]$RepositoryPath, [string]$Account, [string]$Repository) {
   $runtime = Join-Path $env:LOCALAPPDATA 'LocalBoard'
   New-Item -ItemType Directory -Path $runtime -Force | Out-Null
-  [ordered]@{
+  $settings = [ordered]@{
     defaultTodoRepository = $RepositoryPath
     primaryGitHubAccount = $Account
     personalTodoRepository = $Repository
-  } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runtime 'settings.json') -Encoding utf8NoBOM
+  } | ConvertTo-Json
+  Write-Utf8File (Join-Path $runtime 'settings.json') ($settings + "`n")
 }
 
 function New-LocalBoardShortcuts([string]$Bin, [string]$Release, [string]$RepositoryPath) {
