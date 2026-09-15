@@ -56,6 +56,13 @@ try {
   await originalRow.first().locator('[data-switch-workspace]').click();
   await main.waitForFunction(() => document.querySelector('#workspace-switcher strong')?.textContent === 'localboard');
 
+  const beforeSecondLaunchCount = electronApp.windows().length;
+  await startViaCli(fixtureRoot);
+  await main.waitForFunction((name) => document.querySelector('#workspace-switcher strong')?.textContent === name, fixtureName);
+  assert.equal(electronApp.windows().length, beforeSecondLaunchCount);
+  await startViaCli(root);
+  await main.waitForFunction(() => document.querySelector('#workspace-switcher strong')?.textContent === 'localboard');
+
   await main.locator('[data-tab="notes"]').click();
   await main.waitForFunction(() => !document.querySelector('#view .loading'));
   const sticky = await findWindow(electronApp, (page) => page.locator('.sticky').count());
@@ -96,6 +103,15 @@ try {
   assert.equal(fit.contentFitsWidth, true);
   await main.screenshot({ path: resolve(artifacts, 'navigation-minimum-window.png') });
 
+  await Promise.all([
+    main.waitForEvent('close'),
+    nativeMain.evaluate((window) => window.close())
+  ]);
+  await startViaCli(fixtureRoot);
+  const reopenedMain = await findWindow(electronApp, (candidate) => candidate.locator('.nav').count());
+  await reopenedMain.waitForFunction((name) => document.querySelector('#workspace-switcher strong')?.textContent === name, fixtureName);
+  assert.equal(electronApp.windows().length, beforeSecondLaunchCount);
+
   console.log(JSON.stringify({ ok: true, pageErrors, fit, screenshots: artifacts }, null, 2));
 } finally {
   await electronApp.close().catch(() => {});
@@ -112,4 +128,14 @@ async function findWindow(app, predicate) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   throw new Error('LocalBoard main window did not appear');
+}
+
+async function startViaCli(cwd) {
+  const { stdout } = await execFileAsync(process.execPath, [
+    resolve(root, 'src/cli.mjs'), 'start', '--repo', cwd, '--json'
+  ], { cwd: root, windowsHide: true });
+  const result = JSON.parse(stdout);
+  assert.equal(result.launched, true);
+  assert.equal(result.mode, 'background');
+  assert.equal(result.cwd, cwd);
 }

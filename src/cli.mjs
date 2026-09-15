@@ -10,6 +10,7 @@ import { githubContext } from './core/repo-config.mjs';
 import { inspectRepositoryContext } from './core/repository-context.mjs';
 import { publishCodexHook, publishExecutionContext } from './core/context-publisher.mjs';
 import { runPreCommit, runPrePush } from './core/git-hooks.mjs';
+import { launchDesktop } from './core/desktop-launcher.mjs';
 
 const execFileAsync = promisify(execFile);
 const { positionals, options } = parseArgs(process.argv.slice(2));
@@ -25,6 +26,10 @@ try {
 
 async function dispatch(group, command, args, opts) {
   if (!group || group === 'help' || opts.help) return help();
+  if (group === 'start' || group === 'open') {
+    if (args.length) throw new Error('Only one startup path may be provided');
+    return launchDesktop({ cwd: opts.repo || command || process.cwd(), foreground: Boolean(opts.foreground) });
+  }
   if (group === 'daemon') return ensureBroker();
   if (group === 'todo') return todoCommand(command, args, opts);
   if (group === 'project') return projectCommand(command, args, opts);
@@ -245,6 +250,7 @@ function print(value, asJson) {
 
 function help() {
   return `LocalBoard\n\n` +
+    `  localboard start [path] [--foreground]\n` +
     `  localboard todo list|add|update|done|remove\n` +
     `  localboard project get|pull|set-field|clear-field|update-draft\n` +
     `  localboard issue list|create|update|close\n` +

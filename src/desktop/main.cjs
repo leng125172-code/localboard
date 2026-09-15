@@ -6,14 +6,19 @@ if (!instanceLock) app.quit();
 
 let mainWindow;
 let stickyWindow;
+let mainRendererReady = false;
+let pendingSecondInstance;
 
-app.on('second-instance', (_event, argv, cwd) => {
-  const target = mainWindow ?? stickyWindow;
-  if (!target) return;
+app.on('second-instance', (_event, argv, cwd, additionalData) => {
+  if (!app.isReady()) return;
+  const requestedCwd = additionalData?.cwd || cwd;
+  const hadMainWindow = Boolean(mainWindow && !mainWindow.isDestroyed());
+  const target = ensureMainWindow(requestedCwd);
   if (target.isMinimized()) target.restore();
   target.show();
   target.focus();
-  mainWindow?.webContents.send('second-instance', { argv, cwd });
+  if (hadMainWindow && mainRendererReady) target.webContents.send('second-instance', { argv, cwd: requestedCwd });
+  else if (hadMainWindow) pendingSecondInstance = { argv, cwd: requestedCwd };
 });
 
 app.whenReady().then(async () => {
@@ -41,6 +46,13 @@ app.whenReady().then(async () => {
     }
     return context;
   });
+  ipcMain.handle('app:ready', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return null;
+    mainRendererReady = true;
+    const payload = pendingSecondInstance;
+    pendingSecondInstance = null;
+    return payload;
+  });
   ipcMain.handle('sticky:open', async (_event, note = {}) => openSticky(note, brokerRequest));
   ipcMain.handle('sticky:bounds', (event) => BrowserWindow.fromWebContents(event.sender)?.getBounds());
   ipcMain.handle('window:action', (event, action) => {
@@ -52,17 +64,20 @@ app.whenReady().then(async () => {
     return true;
   });
 
-  mainWindow = createWindow();
-  mainWindow.on('closed', () => { mainWindow = null; });
+  ensureMainWindow(process.cwd());
   await openSticky({}, brokerRequest);
-  app.on('activate', () => { if (!mainWindow) mainWindow = createWindow(); });
+  app.on('activate', () => {
+    const window = ensureMainWindow();
+    window.show();
+    window.focus();
+  });
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-function createWindow() {
+function createWindow(startupCwd) {
   const window = new BrowserWindow({
     width: 1240,
     height: 800,
@@ -77,9 +92,20 @@ function createWindow() {
       sandbox: true
     }
   });
-  window.loadFile(path.join(__dirname, 'ui', 'index.html'));
+  window.loadFile(path.join(__dirname, 'ui', 'index.html'), startupCwd ? { query: { cwd: startupCwd } } : undefined);
+  window.webContents.on('did-start-loading', () => { mainRendererReady = false; });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   return window;
+}
+
+function ensureMainWindow(startupCwd) {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  mainWindow = createWindow(startupCwd);
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    mainRendererReady = false;
+  });
+  return mainWindow;
 }
 
 async function openSticky(note, brokerRequest) {

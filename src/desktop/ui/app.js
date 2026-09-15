@@ -7,9 +7,10 @@ if (query.get('sticky') === 'activity') renderActivitySticky(query.get('id'));
 else renderApplication();
 
 async function renderApplication() {
-  const savedWorkspace = localStorage.getItem('localboard.workspace');
+  const startupWorkspace = query.get('cwd');
+  const savedWorkspace = startupWorkspace || localStorage.getItem('localboard.workspace');
   let context = await api.context(savedWorkspace || undefined);
-  if (savedWorkspace && !context.repository.isGitRepository) {
+  if (!startupWorkspace && savedWorkspace && !context.repository.isGitRepository) {
     localStorage.removeItem('localboard.workspace');
     context = await api.context();
   }
@@ -38,6 +39,8 @@ async function renderApplication() {
   document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.tab)));
   document.querySelector('#workspace-switcher').addEventListener('click', () => navigate('notes'));
   api.onSecondInstance(({ cwd }) => switchWorkspace(cwd));
+  const pendingStartup = await api.ready();
+  if (pendingStartup?.cwd) return switchWorkspace(pendingStartup.cwd);
   await navigate('todos');
 }
 

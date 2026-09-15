@@ -9,12 +9,13 @@
     "localboard": "src/cli.mjs"
   },
   "scripts": {
-    "start": "electron .",
+    "start": "node src/cli.mjs start --foreground",
+    "open": "node src/cli.mjs start",
     "daemon": "node src/daemon.mjs",
     "cli": "node src/cli.mjs",
     "test": "node --test",
     "test:ui": "node e2e/electron-ui.mjs",
-    "check": "node --check src/cli.mjs && node --check src/daemon.mjs && node --test"
+    "check": "node --check src/cli.mjs && node --check src/daemon.mjs && node --check src/desktop/main.cjs && node --check src/desktop/preload.cjs && node --check src/desktop/ui/app.js && node --test"
   },
   "engines": {
     "node": ">=22.5"

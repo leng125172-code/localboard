@@ -25,10 +25,19 @@ gh auth login --scopes "repo,project,workflow"
 Copy-Item localboard.config.example.json .localboard/config.json
 npm test
 npm run test:ui
-npm start
+localboard start
 ```
 
 配置文件只保存 owner、项目号和仓库名，禁止放 token。LocalBoard 复用 `gh auth`。
+
+日常可在任意目录执行 `localboard start`：命令会在后台启动并立即返回；如果 LocalBoard 已运行，则只唤醒现有主窗口并切换到当前目录对应的仓库，不会再创建桌面端或便签实例。也可以显式指定路径：
+
+```powershell
+localboard start D:\GitRepos\GithubCode\leng125172-code\localboard
+localboard start --repo D:\GitRepos\GithubCode\leng125172-code\localboard
+```
+
+开发排错时使用 `localboard start --foreground`（或 `npm start`）在前台保留日志。仓库根目录的 `LocalBoard.cmd` 可直接双击启动当前项目。启动目录尚未 `git init` 或没有连接 GitHub 时，桌面与本地功能仍会启动，但会跳过 GitHub 信息同步。
 
 常用命令：
 
