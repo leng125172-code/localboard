@@ -18,8 +18,14 @@ body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 90% 0
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 
-.shell { height: 100vh; min-height: 0; display: grid; grid-template-columns: 230px minmax(0, 1fr); overflow: hidden; }
-.sidebar { height: 100vh; min-height: 0; overflow: hidden; background: #20342d; color: #f6f3e9; padding: 28px 18px; display: flex; flex-direction: column; }
+.shell { height: 100vh; min-height: 0; display: grid; grid-template-columns: 72px 218px minmax(0, 1fr); overflow: hidden; }
+.project-rail { height: 100vh; background: #162720; color: white; padding: 18px 10px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.project-rail .brand-mark { flex: 0 0 auto; }
+.project-list { width: 100%; min-height: 0; display: grid; gap: 10px; overflow-y: auto; padding: 3px; }
+.project-button { position: relative; width: 46px; height: 46px; margin: 0 auto; border: 1px solid rgba(255,255,255,.12); border-radius: 15px; color: #e8eee9; background: #294139; font-weight: 800; }
+.project-button:hover, .project-button.active { background: #f3b766; color: #20342d; border-radius: 12px; }
+.project-button i { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border: 2px solid #162720; border-radius: 50%; background: #6ed59d; }
+.sidebar { height: 100vh; min-height: 0; overflow: hidden; background: #20342d; color: #f6f3e9; padding: 28px 16px; display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 10px 28px; }
 .brand-mark { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: #f3b766; color: #20342d; font-weight: 900; }
 .brand strong { display: block; letter-spacing: .2px; }
@@ -27,8 +33,15 @@ button { cursor: pointer; }
 .nav { min-height: 0; display: grid; gap: 6px; overflow-y: auto; }
 .nav button { border: 0; background: transparent; color: #c8d3ce; text-align: left; padding: 11px 12px; border-radius: 10px; }
 .nav button.active, .nav button:hover { background: #315046; color: white; }
-.connection { flex: 0 0 auto; margin-top: auto; padding: 12px; color: #b7c6bf; font-size: 12px; border-top: 1px solid #3b554c; }
+.workspace-actions { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #3b554c; }
+.workspace-actions button { color: #f3cf8f; }
+.connection { flex: 0 0 auto; width: 100%; display: flex; align-items: center; gap: 7px; margin-top: auto; padding: 12px; color: #b7c6bf; font-size: 12px; border: 0; border-top: 1px solid #3b554c; background: transparent; text-align: left; }
+.connection strong { margin-left: auto; color: white; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #6ed59d; margin-right: 7px; }
+.dot.offline { background: #d05e53; }
+.auth-card { margin-top: 14px; padding: 11px; border: 1px solid #52665f; border-radius: 12px; display: grid; gap: 7px; color: #d8e0dc; font-size: 11px; }
+.auth-card.ok { border-color: #477e68; background: rgba(72,133,105,.15); }
+.auth-card button, .auth-card select { min-width: 0; border: 1px solid #63756e; border-radius: 7px; padding: 6px; background: #294139; color: white; }
 
 .content { height: 100vh; min-width: 0; padding: 36px 42px 60px; overflow: auto; }
 .topbar { display: flex; justify-content: space-between; gap: 24px; align-items: center; margin-bottom: 28px; }
@@ -39,6 +52,8 @@ h1 { margin: 4px 0 0; font: 700 34px/1.15 Georgia, "Songti SC", serif; }
 .repo-pill strong, .repo-pill span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repo-pill span { margin-top: 2px; color: var(--muted); font-size: 11px; }
 .toolbar { display: flex; gap: 10px; margin-bottom: 20px; }
+.scope-banner { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 13px 16px; margin-bottom: 18px; border-radius: 13px; background: var(--green-soft); }
+.scope-banner span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .primary, .secondary, .danger { border-radius: 10px; padding: 9px 14px; border: 1px solid transparent; }
 .primary { color: white; background: var(--green); }
 .secondary { color: var(--ink); background: var(--paper); border-color: var(--line); }
@@ -71,13 +86,27 @@ h1 { margin: 4px 0 0; font: 700 34px/1.15 Georgia, "Songti SC", serif; }
 .dialog h2 { margin-top: 0; }
 .error { background: #fff0ed; color: #93372e; border: 1px solid #ecc2bb; border-radius: 10px; padding: 10px 12px; margin-bottom: 16px; }
 .loading { padding: 52px 20px; text-align: center; color: var(--muted); }
+.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 22px; }
+.metric { min-width: 0; padding: 17px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper); box-shadow: var(--shadow); }
+.metric span, .metric small { display: block; color: var(--muted); }
+.metric strong { display: block; margin: 7px 0; font: 700 23px/1.1 Georgia, serif; }
+.git-change { width: 100%; display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; padding: 12px 16px; border: 0; border-bottom: 1px solid #ece8de; background: transparent; color: var(--ink); text-align: left; }
+.git-change:hover { background: #f6f3ec; }
+.git-code { color: var(--orange); font: 700 12px ui-monospace, monospace; }
+.git-change small { color: var(--muted); }
+.diff { min-height: 190px; max-height: 46vh; overflow: auto; margin-top: 18px; padding: 16px; border-radius: 14px; background: #17241f; color: #dce8e1; white-space: pre-wrap; font: 12px/1.55 Consolas, monospace; }
 
-.sticky { height: 100vh; background: #fff3a6; display: grid; grid-template-rows: 38px minmax(84px, auto) 1fr 28px; }
+.sticky { height: 100vh; background: #fff3a6; display: grid; grid-template-rows: 38px 1fr 28px; }
 .sticky-head { -webkit-app-region: drag; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 7px 0 12px; font-weight: 700; background: rgba(255,255,255,.2); }
 .sticky-window-actions { -webkit-app-region: no-drag; display: flex; gap: 2px; }
-.sticky-window-actions button { width: 25px; height: 25px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: rgba(30,41,37,.64); font-size: 17px; line-height: 1; }
+.sticky-window-actions button { min-width: 25px; height: 25px; padding: 0 4px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: rgba(30,41,37,.64); font-size: 12px; line-height: 1; }
 .sticky-window-actions button:hover { background: rgba(255,255,255,.5); color: #1e2925; }
-.sticky-contexts { display: grid; gap: 7px; padding: 10px; max-height: 270px; overflow: auto; border-bottom: 1px solid rgba(30,41,37,.12); }
+.sticky-window-actions button.selected { color: white; background: #3c745a; }
+.sticky-window-actions input { width: 25px; height: 25px; padding: 2px; border: 0; background: transparent; }
+.sticky-scroll { min-height: 0; overflow-y: auto; }
+.sticky section { padding: 9px 10px; border-bottom: 1px solid rgba(30,41,37,.12); }
+.sticky section h2 { margin: 0 0 8px; color: rgba(30,41,37,.68); font-size: .78em; text-transform: uppercase; letter-spacing: .04em; }
+.sticky-contexts { display: grid; gap: 7px; max-height: 240px; overflow: auto; }
 .context-card { border-radius: 9px; padding: 8px 9px; background: rgba(255,255,255,.45); border-left: 4px solid #458060; display: grid; gap: 3px; font-size: 12px; }
 .context-card.idle { border-left-color: #d18b41; }
 .context-card.stale { border-left-color: #909995; opacity: .76; }
@@ -89,7 +118,14 @@ h1 { margin: 4px 0 0; font: 700 34px/1.15 Georgia, "Songti SC", serif; }
 .context-title span { color: rgba(30,41,37,.58); text-transform: uppercase; font-size: 10px; }
 .context-card small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: rgba(30,41,37,.65); }
 .sticky-empty { color: rgba(30,41,37,.55); text-align: center; padding: 24px 8px; font-size: 12px; }
-.sticky textarea { width: 100%; height: 100%; min-height: 80px; border: 0; resize: none; padding: 14px; outline: 0; background: transparent; line-height: 1.55; }
+.sticky-todo { width: 100%; display: flex; gap: 8px; padding: 5px 4px; border: 0; background: transparent; color: var(--ink); text-align: left; }
+.sticky-todo.done { opacity: .55; text-decoration: line-through; }
+.bookmark-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.bookmark { flex: 0 0 170px; min-width: 0; padding: 9px; border-radius: 4px 12px 12px 4px; border-left: 5px solid #3e765c; background: rgba(255,255,255,.5); display: grid; gap: 3px; }
+.bookmark strong, .bookmark span, .bookmark small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bookmark span, .bookmark small { color: rgba(30,41,37,.62); font-size: .72em; }
+.sticky .memo { min-height: 180px; display: grid; grid-template-rows: auto 1fr; }
+.sticky textarea { width: 100%; min-height: 150px; border: 0; resize: vertical; padding: 4px; outline: 0; background: transparent; line-height: 1.55; font-size: inherit; }
 .sticky-foot { padding: 4px 10px; color: rgba(30,41,37,.55); font-size: 11px; }
 
-@media (max-width: 1050px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, 1fr); } .metric-grid { grid-template-columns: repeat(2, 1fr); } }

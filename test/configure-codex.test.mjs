@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { enableHooks } from '../scripts/configure-codex.mjs';
+import { enableHooks, enableMcp, mergeLocalBoardHook } from '../scripts/configure-codex.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -18,6 +18,30 @@ test('enables Codex hooks without replacing other feature settings', () => {
 
 test('adds a features section when Codex config has none', () => {
   assert.equal(enableHooks('model = "test"\n'), 'model = "test"\n\n[features]\nhooks = true\n');
+});
+
+test('adds and replaces the LocalBoard MCP block idempotently', () => {
+  const first = enableMcp('model = "test"\n', 'C:\\LocalBoard\\localboard.cmd');
+  const second = enableMcp(first, 'D:\\Apps\\localboard.cmd');
+  assert.equal((second.match(/\[mcp_servers\.localboard\]/g) || []).length, 1);
+  assert.match(second, /D:\\\\Apps\\\\localboard\.cmd/);
+  assert.doesNotMatch(second, /C:\\\\LocalBoard/);
+});
+
+test('merges LocalBoard into the unconditional matcher group without dropping other hooks', () => {
+  const existing = { type: 'command', command: 'existing-tool start' };
+  const staleLocalBoard = { type: 'command', command: 'C:\\old\\localboard.cmd hook', async: true };
+  const replacement = { type: 'command', command: 'C:\\new\\localboard.cmd hook', timeout: 10 };
+  const entries = [
+    { matcher: 'special-tool', hooks: [{ type: 'command', command: 'matched-tool start' }] },
+    { hooks: [existing, staleLocalBoard] }
+  ];
+
+  const merged = mergeLocalBoardHook(entries, replacement);
+
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].hooks[0].command, 'matched-tool start');
+  assert.deepEqual(merged[1].hooks, [existing, replacement]);
 });
 
 test('Codex setup preserves existing hooks and is idempotent', async () => {
@@ -41,9 +65,15 @@ test('Codex setup preserves existing hooks and is idempotent', async () => {
     await execFileAsync(process.execPath, args);
 
     const hooks = JSON.parse(await readFile(join(codex, 'hooks.json'), 'utf8'));
-    assert.equal(hooks.hooks.SessionStart.length, 2);
+    assert.equal(hooks.hooks.SessionStart.length, 1);
     assert.equal(hooks.hooks.SessionStart[0].hooks[0].command, 'existing-tool start');
-    assert.equal(hooks.hooks.SessionStart.filter((entry) => entry.hooks[0].command.includes('localboard.cmd')).length, 1);
+    assert.equal(hooks.hooks.SessionStart[0].hooks.filter((hook) => hook.command.includes('localboard.cmd')).length, 1);
+    for (const eventName of ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'Stop', 'SessionEnd']) {
+      const localBoardHook = hooks.hooks[eventName].flatMap((entry) => entry.hooks)
+        .find((hook) => hook.command.includes('localboard.cmd'));
+      assert.equal(localBoardHook.async, undefined);
+      assert.equal(localBoardHook.timeout, 10);
+    }
     assert.match(await readFile(join(codex, 'config.toml'), 'utf8'), /hooks = true\nother = true/);
     assert.match(await readFile(join(skillTarget, 'SKILL.md'), 'utf8'), /name: localboard/);
   } finally {

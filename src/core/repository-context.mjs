@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { readRepoConfig } from './config-file.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -10,13 +10,20 @@ const githubAuthCache = new Map();
 export async function inspectRepositoryContext(cwd = process.cwd(), options = {}) {
   const run = options.run ?? runCommand;
   const inspectedAt = new Date().toISOString();
+  const resolvedCwd = resolve(cwd);
   const base = {
-    cwd: resolve(cwd),
+    projectId: `path:${createHash('sha256').update(resolvedCwd.toLowerCase()).digest('hex')}`,
+    projectKind: 'non-git',
+    repositoryName: basename(resolvedCwd) || resolvedCwd,
+    cwd: resolvedCwd,
     isGitRepository: false,
+    ghAvailable: null,
+    githubAuthAccounts: [],
     githubConfigured: false,
     githubAuthConnected: false,
     syncGitHub: false,
     syncReason: 'not-git',
+    capabilities: ['global-todos'],
     inspectedAt
   };
 
@@ -31,16 +38,24 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
     tryRun(run, 'git', ['branch', '--show-current'], repoRoot),
     tryRun(run, 'git', ['rev-parse', 'HEAD'], repoRoot),
     tryRun(run, 'git', ['status', '--porcelain', '--untracked-files=no'], repoRoot),
-    tryRun(run, 'git', ['config', '--get', 'remote.origin.url'], repoRoot)
+    tryRun(run, 'git', ['config', '--get', 'remote.origin.url'], repoRoot),
+    tryRun(run, 'git', ['remote', '-v'], repoRoot)
   ]);
-  const [common, gitDirResult, branch, head, status, remote] = results;
+  const [common, gitDirResult, branch, head, status, remote, remoteList] = results;
   const remoteUrl = sanitizeRemoteUrl(remote.ok ? remote.stdout.trim() : null);
-  const configuredRepository = options.repositoryOverride || config.github?.repositories?.[0] || parseGitHubRepository(remoteUrl);
+  const remotes = parseGitRemotes(remoteList.ok ? remoteList.stdout : '');
+  const githubRepositories = [...new Set([
+    parseGitHubRepository(remoteUrl),
+    ...remotes.map((item) => parseGitHubRepository(item.url))
+  ].filter(Boolean))];
+  const configuredRepository = options.repositoryOverride || config.github?.repositories?.[0] || githubRepositories[0];
   const githubEnabled = config.github?.enabled !== false;
   const githubConfigured = githubEnabled && Boolean(configuredRepository);
-  const expectedGithubAccount = config.github?.account || null;
+  const expectedGithubAccount = options.expectedGithubAccount || config.github?.account || null;
   let githubAuthConnected = false;
   let activeGithubAccount = null;
+  let githubAuthAccounts = [];
+  let ghAvailable = null;
 
   // Do not even invoke gh unless this is a Git repository with GitHub configured.
   if (githubConfigured && options.checkGitHubAuth !== false) {
@@ -49,12 +64,22 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
     if (cached && Date.now() - cached.checkedAt < Number(options.authCacheTtlMs ?? 15_000)) {
       githubAuthConnected = cached.connected;
       activeGithubAccount = cached.account;
+      githubAuthAccounts = cached.accounts ?? [];
+      ghAvailable = cached.ghAvailable ?? true;
     } else {
-      const auth = await tryRun(run, 'gh', ['auth', 'status', '--active', '--hostname', 'github.com', '--json', 'hosts'], repoRoot);
-      activeGithubAccount = auth.ok ? activeAccountFromStatus(auth.stdout) : null;
-      githubAuthConnected = auth.ok && (!expectedGithubAccount || sameAccount(activeGithubAccount, expectedGithubAccount));
+      const auth = await tryRun(run, 'gh', ['auth', 'status', '--hostname', 'github.com', '--json', 'hosts'], repoRoot);
+      ghAvailable = auth.ok || auth.error?.code !== 'ENOENT';
+      activeGithubAccount = activeAccountFromStatus(auth.stdout);
+      githubAuthAccounts = accountsFromStatus(auth.stdout);
+      githubAuthConnected = Boolean(activeGithubAccount) && (!expectedGithubAccount || sameAccount(activeGithubAccount, expectedGithubAccount));
       if (options.run === undefined && options.authCache !== false) {
-        githubAuthCache.set(authKey, { connected: githubAuthConnected, account: activeGithubAccount, checkedAt: Date.now() });
+        githubAuthCache.set(authKey, {
+          connected: githubAuthConnected,
+          account: activeGithubAccount,
+          accounts: githubAuthAccounts,
+          ghAvailable,
+          checkedAt: Date.now()
+        });
       }
     }
   }
@@ -63,6 +88,8 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
     ? 'github-disabled'
     : !githubConfigured
       ? 'github-not-configured'
+      : ghAvailable === false
+        ? 'gh-not-installed'
       : expectedGithubAccount && activeGithubAccount && !sameAccount(activeGithubAccount, expectedGithubAccount)
         ? 'github-account-mismatch'
         : !githubAuthConnected
@@ -75,9 +102,14 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
   const repositoryKey = createHash('sha256')
     .update(`${repoRoot}\0${resolvedCommonDir}\0${configuredRepository ?? remoteUrl ?? ''}`)
     .digest('hex');
+  const projectId = `worktree:${createHash('sha256')
+    .update(`${repoRoot.toLowerCase()}\0${resolvedGitDir.toLowerCase()}`)
+    .digest('hex')}`;
 
   return {
     ...base,
+    projectId,
+    projectKind: githubConfigured ? 'github' : 'git',
     isGitRepository: true,
     repoRoot,
     repositoryKey,
@@ -91,13 +123,20 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
     workingTreeDirty: status.ok && Boolean(status.stdout.trim()),
     changedFileCount: status.ok ? status.stdout.split(/\r?\n/).filter(Boolean).length : null,
     remoteUrl,
+    remotes,
+    githubRepositories,
     githubRepository: configuredRepository ?? null,
+    ghAvailable,
+    githubAuthAccounts,
     githubConfigured,
     githubAuthConnected,
     activeGithubAccount,
     expectedGithubAccount,
     syncGitHub: syncReason === 'ready',
     syncReason,
+    capabilities: githubConfigured
+      ? ['repository-todos', 'git-status', 'github-projects', 'issues', 'pull-requests', 'actions']
+      : ['repository-todos', 'git-status'],
     github: config.github ?? null
   };
 }
@@ -110,6 +149,32 @@ export function activeAccountFromStatus(output) {
   } catch {
     return null;
   }
+}
+
+export function accountsFromStatus(output) {
+  try {
+    const status = JSON.parse(output);
+    return [...new Set((status.hosts?.['github.com'] ?? [])
+      .filter((account) => account.state === 'success')
+      .map((account) => account.login)
+      .filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
+export function parseGitRemotes(output) {
+  const seen = new Set();
+  const remotes = [];
+  for (const line of String(output ?? '').split(/\r?\n/)) {
+    const match = line.trim().match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+    if (!match || match[3] !== 'fetch') continue;
+    const key = `${match[1]}\0${match[2]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    remotes.push({ name: match[1], url: sanitizeRemoteUrl(match[2]) });
+  }
+  return remotes;
 }
 
 function sameAccount(left, right) {

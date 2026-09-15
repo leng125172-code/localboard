@@ -1,9 +1,10 @@
-import { publishCodexHook } from './context-publisher.mjs';
+import { normalizeCodexHookPayload, publishCodexHook } from './context-publisher.mjs';
 import { launchDesktop } from './desktop-launcher.mjs';
 
 export async function handleCodexHook(payload = {}, options = {}) {
   const publish = options.publish ?? publishCodexHook;
   const launch = options.launch ?? launchDesktop;
+  payload = normalizeCodexHookPayload(payload);
   const reported = await publish(payload);
   let desktop = null;
   if (payload.hook_event_name === 'SessionStart') {

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "localboard": {
+      "command": "localboard",
+      "args": ["mcp"]
+    }
+  }
+}

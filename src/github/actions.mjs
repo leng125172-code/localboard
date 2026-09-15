@@ -12,6 +12,18 @@ export class ActionsApi {
     }, { listKey: 'workflow_runs' });
   }
 
+  async get(owner, repo, runId) {
+    const [run, jobs] = await Promise.all([
+      this.client.rest('GET', `repos/${owner}/${repo}/actions/runs/${runId}`),
+      this.client.restPaginated(`repos/${owner}/${repo}/actions/runs/${runId}/jobs`, { per_page: 100 }, { listKey: 'jobs' })
+    ]);
+    return { run, jobs: jobs.jobs };
+  }
+
+  logs(owner, repo, runId) {
+    return this.client.runText(['run', 'view', String(runId), '--repo', `${owner}/${repo}`, '--log']);
+  }
+
   rerun({ owner, repo, runId, failedOnly = false }) {
     const suffix = failedOnly ? '/rerun-failed-jobs' : '/rerun';
     return this.client.rest('POST', `repos/${owner}/${repo}/actions/runs/${runId}${suffix}`);

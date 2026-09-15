@@ -9,6 +9,18 @@ export function runtimeDirectory(env = process.env) {
   return join(env.LOCALAPPDATA || env.XDG_RUNTIME_DIR || join(homedir(), '.local', 'state'), 'LocalBoard');
 }
 
+export function dataDirectory(env = process.env) {
+  return join(runtimeDirectory(env), 'data');
+}
+
+export function globalTodoFilePath(env = process.env) {
+  return join(dataDirectory(env), 'global-todos.json');
+}
+
+export function hookSpoolPath(env = process.env) {
+  return join(runtimeDirectory(env), 'hook-spool.ndjson');
+}
+
 export function temporaryRuntimeDirectory() {
   return join(tmpdir(), `localboard-${process.getuid?.() ?? process.env.USERNAME ?? 'user'}`);
 }
@@ -25,4 +37,3 @@ export async function findGitRoot(cwd = process.cwd()) {
 export function todoFilePath(repoRoot) {
   return join(repoRoot, '.localboard', 'todos.json');
 }
-

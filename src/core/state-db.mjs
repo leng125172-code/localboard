@@ -64,7 +64,21 @@ export class StateDatabase {
         value_json TEXT NOT NULL,
         fetched_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS projects (
+        project_id TEXT PRIMARY KEY,
+        path TEXT UNIQUE NOT NULL,
+        kind TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        github_account TEXT,
+        favorite_projects_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+      );
     `);
+    ensureColumn(this.db, 'notes', 'visible', 'INTEGER NOT NULL DEFAULT 1');
+    ensureColumn(this.db, 'notes', 'desktop_pinned', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn(this.db, 'notes', 'font_size', 'INTEGER NOT NULL DEFAULT 14');
   }
 
   getIdempotent(key) {
@@ -163,13 +177,97 @@ export class StateDatabase {
     });
   }
 
+  agentStatus(options = {}) {
+    const contexts = this.listAgentContexts({ includeEnded: false, maxAgeHours: options.maxAgeHours ?? 24,
+      staleAfterMinutes: options.staleAfterMinutes ?? 30 });
+    const connected = contexts.filter((item) => item.status !== 'stale');
+    const counts = {};
+    for (const context of connected) counts[context.status] = (counts[context.status] ?? 0) + 1;
+    return {
+      connected: connected.length,
+      mainAgents: connected.filter((item) => !item.agentId).length,
+      subagents: connected.filter((item) => item.agentId).length,
+      stale: contexts.length - connected.length,
+      counts,
+      contexts
+    };
+  }
+
   deleteAgentContext(contextKey) {
     return { deleted: this.db.prepare('DELETE FROM agent_contexts WHERE context_key=?').run(contextKey).changes === 1 };
   }
 
+  upsertProject(context) {
+    if (!context?.projectId || !context?.cwd) throw new Error('projectId and cwd are required');
+    const path = context.repoRoot ?? context.cwd;
+    const existing = this.db.prepare(`SELECT project_id AS projectId,pinned,github_account AS githubAccount,
+      favorite_projects_json AS favoriteProjectsJson,created_at AS createdAt FROM projects WHERE project_id=? OR path=?
+      ORDER BY project_id=? DESC LIMIT 1`).get(context.projectId, path, context.projectId);
+    if (existing && existing.projectId !== context.projectId) {
+      this.db.prepare('DELETE FROM projects WHERE project_id=?').run(existing.projectId);
+    }
+    const now = new Date().toISOString();
+    const value = {
+      ...context,
+      pinned: Boolean(existing?.pinned),
+      githubAccount: existing?.githubAccount ?? context.expectedGithubAccount ?? null,
+      favoriteProjects: existing ? JSON.parse(existing.favoriteProjectsJson) : [],
+      createdAt: existing?.createdAt ?? now,
+      lastSeenAt: now
+    };
+    this.db.prepare(`
+      INSERT INTO projects(project_id,path,kind,payload_json,pinned,github_account,favorite_projects_json,created_at,last_seen_at)
+      VALUES (@projectId,@path,@kind,@payloadJson,@pinned,@githubAccount,@favoriteProjectsJson,@createdAt,@lastSeenAt)
+      ON CONFLICT(project_id) DO UPDATE SET path=excluded.path,kind=excluded.kind,payload_json=excluded.payload_json,
+        last_seen_at=excluded.last_seen_at
+    `).run({
+      projectId: value.projectId,
+      path,
+      kind: value.projectKind,
+      payloadJson: JSON.stringify(value),
+      pinned: value.pinned ? 1 : 0,
+      githubAccount: value.githubAccount,
+      favoriteProjectsJson: JSON.stringify(value.favoriteProjects),
+      createdAt: value.createdAt,
+      lastSeenAt: value.lastSeenAt
+    });
+    return value;
+  }
+
+  listProjects(options = {}) {
+    const maxAgeDays = Number(options.maxAgeDays ?? 30);
+    const cutoff = new Date(Date.now() - maxAgeDays * 86400_000).toISOString();
+    return this.db.prepare(`SELECT payload_json AS payloadJson,pinned,github_account AS githubAccount,
+      favorite_projects_json AS favoriteProjectsJson,created_at AS createdAt,last_seen_at AS lastSeenAt
+      FROM projects WHERE pinned=1 OR last_seen_at>=? ORDER BY pinned DESC,last_seen_at DESC`).all(cutoff).map(projectRow);
+  }
+
+  getProject(projectId) {
+    const row = this.db.prepare(`SELECT payload_json AS payloadJson,pinned,github_account AS githubAccount,
+      favorite_projects_json AS favoriteProjectsJson,created_at AS createdAt,last_seen_at AS lastSeenAt
+      FROM projects WHERE project_id=?`).get(projectId);
+    return row ? projectRow(row) : null;
+  }
+
+  updateProjectPreferences(projectId, patch = {}) {
+    const current = this.getProject(projectId);
+    if (!current) throw new Error(`Project not found: ${projectId}`);
+    const pinned = patch.pinned === undefined ? current.pinned : Boolean(patch.pinned);
+    const githubAccount = patch.githubAccount === undefined ? current.githubAccount : patch.githubAccount;
+    const favoriteProjects = patch.favoriteProjects === undefined ? current.favoriteProjects : [...new Set(patch.favoriteProjects.map(String))];
+    this.db.prepare(`UPDATE projects SET pinned=?,github_account=?,favorite_projects_json=? WHERE project_id=?`)
+      .run(pinned ? 1 : 0, githubAccount ?? null, JSON.stringify(favoriteProjects), projectId);
+    return { ...current, pinned, githubAccount, favoriteProjects };
+  }
+
+  deleteProject(projectId) {
+    return { deleted: this.db.prepare('DELETE FROM projects WHERE project_id=?').run(projectId).changes === 1 };
+  }
+
   saveNote(note) {
     const existing = note.id ? this.db.prepare(`
-      SELECT id,title,body,color,x,y,width,height,always_on_top AS alwaysOnTop,updated_at AS updatedAt
+      SELECT id,title,body,color,x,y,width,height,always_on_top AS alwaysOnTop,visible,
+             desktop_pinned AS desktopPinned,font_size AS fontSize,updated_at AS updatedAt
       FROM notes WHERE id=?
     `).get(note.id) : null;
     const now = new Date().toISOString();
@@ -184,23 +282,28 @@ export class StateDatabase {
       width: Number(note.width ?? existing?.width ?? 320),
       height: Number(note.height ?? existing?.height ?? 280),
       alwaysOnTop: (note.alwaysOnTop ?? Boolean(existing?.alwaysOnTop ?? true)) ? 1 : 0,
+      visible: (note.visible ?? Boolean(existing?.visible ?? true)) ? 1 : 0,
+      desktopPinned: (note.desktopPinned ?? Boolean(existing?.desktopPinned ?? false)) ? 1 : 0,
+      fontSize: Math.max(11, Math.min(24, Number(note.fontSize ?? existing?.fontSize ?? 14))),
       updatedAt: now
     };
     this.db.prepare(`
-      INSERT INTO notes(id,title,body,color,x,y,width,height,always_on_top,updated_at)
-      VALUES (@id,@title,@body,@color,@x,@y,@width,@height,@alwaysOnTop,@updatedAt)
+      INSERT INTO notes(id,title,body,color,x,y,width,height,always_on_top,visible,desktop_pinned,font_size,updated_at)
+      VALUES (@id,@title,@body,@color,@x,@y,@width,@height,@alwaysOnTop,@visible,@desktopPinned,@fontSize,@updatedAt)
       ON CONFLICT(id) DO UPDATE SET title=excluded.title, body=excluded.body,
         color=excluded.color, x=excluded.x, y=excluded.y, width=excluded.width,
-        height=excluded.height, always_on_top=excluded.always_on_top, updated_at=excluded.updated_at
+        height=excluded.height, always_on_top=excluded.always_on_top,visible=excluded.visible,
+        desktop_pinned=excluded.desktop_pinned,font_size=excluded.font_size,updated_at=excluded.updated_at
     `).run(value);
-    return { ...value, alwaysOnTop: Boolean(value.alwaysOnTop) };
+    return { ...value, alwaysOnTop: Boolean(value.alwaysOnTop), visible: Boolean(value.visible), desktopPinned: Boolean(value.desktopPinned) };
   }
 
   listNotes() {
     return this.db.prepare(`
-      SELECT id,title,body,color,x,y,width,height,always_on_top AS alwaysOnTop,updated_at AS updatedAt
+      SELECT id,title,body,color,x,y,width,height,always_on_top AS alwaysOnTop,visible,
+             desktop_pinned AS desktopPinned,font_size AS fontSize,updated_at AS updatedAt
       FROM notes ORDER BY updated_at DESC
-    `).all().map((note) => ({ ...note, alwaysOnTop: Boolean(note.alwaysOnTop) }));
+    `).all().map((note) => ({ ...note, alwaysOnTop: Boolean(note.alwaysOnTop), visible: Boolean(note.visible), desktopPinned: Boolean(note.desktopPinned) }));
   }
 
   deleteNote(id) {
@@ -249,4 +352,20 @@ export class StateDatabase {
   close() {
     this.db.close();
   }
+}
+
+function ensureColumn(db, table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+function projectRow(row) {
+  return {
+    ...JSON.parse(row.payloadJson),
+    pinned: Boolean(row.pinned),
+    githubAccount: row.githubAccount ?? null,
+    favoriteProjects: JSON.parse(row.favoriteProjectsJson ?? '[]'),
+    createdAt: row.createdAt,
+    lastSeenAt: row.lastSeenAt
+  };
 }

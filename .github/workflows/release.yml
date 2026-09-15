@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Verify tag matches package version
+        shell: pwsh
+        run: |
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tagVersion = $env:RELEASE_TAG.TrimStart('v')
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(?:[-+].+)?$') {
+            throw "Release tag must be a semantic version prefixed with v: $env:RELEASE_TAG"
+          }
+          if ($packageVersion -ne $tagVersion) {
+            throw "package.json version $packageVersion does not match tag $env:RELEASE_TAG"
+          }
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:ui
+      - run: npm run dist:windows
+      - name: Create GitHub Release
+        shell: pwsh
+        run: |
+          $assets = @(
+            Get-ChildItem dist/LocalBoard-Setup-*.exe
+            Get-ChildItem dist/LocalBoard-Setup-*.exe.blockmap
+          ) | ForEach-Object { $_.FullName }
+          gh release create $env:RELEASE_TAG $assets --verify-tag --generate-notes --title "LocalBoard $env:RELEASE_TAG"

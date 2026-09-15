@@ -1,5 +1,5 @@
 const PROJECT_FRAGMENT = `
-  id title shortDescription updatedAt
+  id number title shortDescription url closed updatedAt
   fields(first: 100) { nodes {
     ... on ProjectV2Field { id name dataType }
     ... on ProjectV2SingleSelectField { id name dataType options { id name color description } }
@@ -10,6 +10,17 @@ const PROJECT_FRAGMENT = `
 export class ProjectsApi {
   constructor(client) {
     this.client = client;
+  }
+
+  async listForRepository(owner, repo) {
+    const data = await this.client.graphql(`
+      query($owner: String!, $repo: String!) {
+        repository(owner: $owner, name: $repo) {
+          projectsV2(first: 100) { nodes { ${PROJECT_FRAGMENT} } }
+        }
+      }
+    `, { owner, repo });
+    return data.data?.repository?.projectsV2?.nodes ?? [];
   }
 
   async getProject(ownerType, owner, number) {

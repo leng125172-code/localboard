@@ -1,8 +1,9 @@
 {
   "name": "localboard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Local-first GitHub Project companion for humans and coding agents",
+  "author": "LocalBoard",
   "type": "module",
   "main": "src/desktop/main.cjs",
   "bin": {
@@ -16,18 +17,49 @@
     "cli": "node src/cli.mjs",
     "test": "node --test",
     "test:ui": "node e2e/electron-ui.mjs",
+    "dist:windows": "electron-builder --win nsis",
     "check": "node --check src/cli.mjs && node --check src/daemon.mjs && node --check src/desktop/main.cjs && node --check src/desktop/preload.cjs && node --check src/desktop/ui/app.js && node --test"
   },
   "engines": {
     "node": ">=22.5"
   },
-  "dependencies": {
-    "electron": "^44.3.0"
-  },
+  "dependencies": {},
   "devDependencies": {
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
     "playwright": "^1.63.0"
   },
   "allowScripts": {
     "electron@44.3.0": true
+  },
+  "build": {
+    "appId": "dev.localboard.desktop",
+    "productName": "LocalBoard",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "scripts/**/*",
+      "integrations/**/*",
+      ".agents/**/*",
+      "package.json",
+      "README.md"
+    ],
+    "extraResources": [
+      { "from": ".agents/skills/localboard", "to": "integrations/skills/localboard" },
+      { "from": "integrations/plugins/localboard", "to": "integrations/plugins/localboard" }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "artifactName": "LocalBoard-Setup-${version}.${ext}"
+    }
   }
 }

@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isAbsolute, resolve } from 'node:path';
 import { brokerRequest, ensureBroker } from './core/broker-client.mjs';
-import { findGitRoot } from './core/paths.mjs';
+import { findGitRoot, runtimeDirectory } from './core/paths.mjs';
 import { githubContext } from './core/repo-config.mjs';
 import { inspectRepositoryContext } from './core/repository-context.mjs';
 import { publishExecutionContext } from './core/context-publisher.mjs';
 import { runPreCommit, runPrePush } from './core/git-hooks.mjs';
 import { launchDesktop } from './core/desktop-launcher.mjs';
 import { handleCodexHook } from './core/codex-hook.mjs';
+import { runMcpServer } from './mcp-server.mjs';
 
 const execFileAsync = promisify(execFile);
 const { positionals, options } = parseArgs(process.argv.slice(2));
@@ -32,6 +33,9 @@ async function dispatch(group, command, args, opts) {
     return launchDesktop({ cwd: opts.repo || command || process.cwd(), foreground: Boolean(opts.foreground) });
   }
   if (group === 'daemon') return ensureBroker();
+  if (group === 'mcp') return runMcpServer();
+  if (group === 'status') return brokerRequest('/v1/status');
+  if (group === 'workspace') return workspaceCommand(command, opts);
   if (group === 'todo') return todoCommand(command, args, opts);
   if (group === 'project') return projectCommand(command, args, opts);
   if (group === 'issue') return issueCommand(command, args, opts);
@@ -51,12 +55,15 @@ async function dispatch(group, command, args, opts) {
 }
 
 async function todoCommand(command, args, opts) {
-  const repo = await findGitRoot(opts.repo);
-  if (command === 'list') return brokerRequest(`/v1/todos?repo=${encodeURIComponent(repo)}`);
+  const target = await resolveTodoTarget(opts.repo || process.cwd(), opts.global ? 'global' : opts.scope);
+  const query = new URLSearchParams({ scope: target.scope });
+  if (target.projectId) query.set('projectId', target.projectId);
+  if (command === 'list') return brokerRequest(`/v1/todos?${query}`);
   const idempotencyKey = opts.idempotencyKey || randomUUID();
+  const base = { scope: target.scope, projectId: target.projectId };
   if (command === 'add') {
     return brokerRequest('/v1/todos', { method: 'POST', body: {
-      repo, operation: 'add', idempotencyKey,
+      ...base, operation: 'add', idempotencyKey,
       todo: {
         title: required(args[0], 'title'), description: opts.description ?? '',
         priority: Number(opts.priority ?? 0), tags: splitList(opts.tags), dueAt: opts.due ?? null
@@ -65,7 +72,7 @@ async function todoCommand(command, args, opts) {
   }
   if (command === 'done') {
     return brokerRequest('/v1/todos', { method: 'POST', body: {
-      repo, operation: 'update', id: required(args[0], 'id'), idempotencyKey, patch: { status: 'done' }
+      ...base, operation: 'update', id: required(args[0], 'id'), idempotencyKey, patch: { status: 'done' }
     } });
   }
   if (command === 'update') {
@@ -73,15 +80,34 @@ async function todoCommand(command, args, opts) {
       priority: opts.priority === undefined ? undefined : Number(opts.priority),
       tags: opts.tags === undefined ? undefined : splitList(opts.tags), dueAt: opts.due });
     return brokerRequest('/v1/todos', { method: 'POST', body: {
-      repo, operation: 'update', id: required(args[0], 'id'), idempotencyKey, patch
+      ...base, operation: 'update', id: required(args[0], 'id'), idempotencyKey, patch
     } });
   }
   if (command === 'remove') {
     return brokerRequest('/v1/todos', { method: 'POST', body: {
-      repo, operation: 'remove', id: required(args[0], 'id'), idempotencyKey
+      ...base, operation: 'remove', id: required(args[0], 'id'), idempotencyKey
     } });
   }
   throw new Error(`Unknown todo command: ${command}`);
+}
+
+async function workspaceCommand(command, opts) {
+  if (command === 'list') return brokerRequest('/v1/projects');
+  if (command === 'register') return brokerRequest('/v1/projects/register', {
+    method: 'POST', body: { cwd: opts.cwd || opts.repo || process.cwd() }
+  });
+  throw new Error(`Unknown workspace command: ${command}`);
+}
+
+async function resolveTodoTarget(cwd, requestedScope) {
+  if (requestedScope === 'global') return { scope: 'global', projectId: null };
+  const context = await brokerRequest('/v1/projects/register', { method: 'POST', body: { cwd } });
+  if (requestedScope === 'repository' && !context.isGitRepository) {
+    throw new Error('Repository todos require a Git project');
+  }
+  return context.isGitRepository
+    ? { scope: 'repository', projectId: context.projectId }
+    : { scope: 'global', projectId: null };
 }
 
 async function projectCommand(command, args, opts) {
@@ -186,10 +212,18 @@ async function hookCommand() {
   for await (const chunk of process.stdin) chunks.push(chunk);
   try {
     await handleCodexHook(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
-  } catch {
-    // Lifecycle reporting must not block Codex.
+  } catch (error) {
+    await logHookError(error).catch(() => {});
+    process.stderr.write(`localboard hook failed: ${error.message}\n`);
   }
   return {};
+}
+
+async function logHookError(error) {
+  const directory = runtimeDirectory();
+  await mkdir(directory, { recursive: true });
+  const message = String(error?.stack || error).replace(/[\r\n]+/g, ' ');
+  await appendFile(resolve(directory, 'hook-errors.log'), `${new Date().toISOString()} ${message}\n`, 'utf8');
 }
 
 async function resolveProject(context) {
@@ -252,13 +286,14 @@ function print(value, asJson) {
 function help() {
   return `LocalBoard\n\n` +
     `  localboard start [path] [--foreground]\n` +
-    `  localboard todo list|add|update|done|remove\n` +
+    `  localboard todo list|add|update|done|remove [--global|--scope global|repository]\n` +
     `  localboard project get|pull|set-field|clear-field|update-draft\n` +
     `  localboard issue list|create|update|close\n` +
     `  localboard pr list|get|merge\n` +
     `  localboard actions runs|rerun|cancel\n` +
     `  localboard note list|add|remove\n` +
     `  localboard context inspect|publish|list\n` +
+    `  localboard workspace list|register | status | mcp\n` +
     `  localboard events | outbox | git install | daemon\n\n` +
     `Use --json for machine-readable output and --idempotency-key when retrying a mutation.`;
 }

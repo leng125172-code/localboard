@@ -25,6 +25,7 @@ export async function publishExecutionContext(input = {}, options = {}) {
 }
 
 export async function publishCodexHook(payload, options = {}) {
+  payload = normalizeCodexHookPayload(payload);
   const request = options.brokerRequest ?? brokerRequest;
   const eventKey = createHash('sha256').update(JSON.stringify([
     payload.session_id, payload.turn_id, payload.agent_id, payload.hook_event_name, payload.reason
@@ -43,6 +44,25 @@ export async function publishCodexHook(payload, options = {}) {
     }, options)
   ]);
   return { event, context };
+}
+
+export function normalizeCodexHookPayload(payload = {}) {
+  const hookEvent = payload.hook_event && typeof payload.hook_event === 'object' ? payload.hook_event : {};
+  return {
+    ...payload,
+    hook_event_name: firstDefined(payload.hook_event_name, hookEvent.hook_event_name, hookEvent.event_name, hookEvent.name),
+    cwd: firstDefined(payload.cwd, hookEvent.cwd),
+    session_id: firstDefined(payload.session_id, payload.sessionId, hookEvent.session_id, hookEvent.sessionId,
+      payload.thread_id, payload.threadId, hookEvent.thread_id, hookEvent.threadId),
+    turn_id: firstDefined(payload.turn_id, payload.turnId, hookEvent.turn_id, hookEvent.turnId),
+    agent_id: firstDefined(payload.agent_id, payload.agentId, hookEvent.agent_id, hookEvent.agentId),
+    model: firstDefined(payload.model, hookEvent.model),
+    reason: firstDefined(payload.reason, hookEvent.reason)
+  };
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== '') ?? null;
 }
 
 function hookStatus(eventName) {

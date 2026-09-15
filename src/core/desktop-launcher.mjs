@@ -21,8 +21,9 @@ export async function launchDesktop({
   });
   if (!info.isDirectory()) throw new Error(`Startup path is not a directory: ${launchCwd}`);
 
-  const executable = electronPath || require('electron');
-  const child = spawnImpl(executable, [resolve(packageRoot)], {
+  const packagedElectron = Boolean(process.versions.electron && !process.defaultApp);
+  const executable = electronPath || (process.versions.electron ? process.execPath : require('electron'));
+  const child = spawnImpl(executable, packagedElectron ? [] : [resolve(packageRoot)], {
     cwd: launchCwd,
     detached: !foreground,
     stdio: foreground ? 'inherit' : 'ignore',

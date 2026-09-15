@@ -1,0 +1,24 @@
+{
+  "name": "localboard",
+  "version": "0.2.0",
+  "description": "Local-first project dashboard, agent activity, and personal todo tools.",
+  "author": {
+    "name": "LocalBoard"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "LocalBoard",
+    "shortDescription": "Report agent work and manage local personal todos.",
+    "longDescription": "Connects Codex and ChatGPT to the LocalBoard desktop dashboard. It reports the current execution path and manages global or Git-repository personal todos without sending private data to a remote LocalBoard service.",
+    "developerName": "LocalBoard",
+    "category": "Productivity",
+    "capabilities": ["Tools", "Write"],
+    "defaultPrompt": [
+      "Report this execution to LocalBoard.",
+      "Add a personal todo for this repository.",
+      "Show my global LocalBoard todos."
+    ],
+    "brandColor": "#176B5B"
+  },
+  "mcpServers": "./.mcp.json"
+}

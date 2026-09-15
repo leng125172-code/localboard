@@ -3,11 +3,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { StateDatabase } from './state-db.mjs';
-import { runtimeDirectory, todoFilePath } from './paths.mjs';
+import { globalTodoFilePath, runtimeDirectory, todoFilePath } from './paths.mjs';
 import { TodoStore } from './todo-store.mjs';
 import { createTodo, updateTodo } from './model.mjs';
 import { GitHubService } from '../github/service.mjs';
 import { inspectRepositoryContext } from './repository-context.mjs';
+import { inspectGitStatus, readGitDiff, repairTodoIgnore, todoTrackingStatus } from './git-status.mjs';
 
 export async function startBroker() {
   const runtime = runtimeDirectory();
@@ -18,6 +19,7 @@ export async function startBroker() {
   const token = randomBytes(32).toString('base64url');
   const state = new StateDatabase(join(runtime, 'state.sqlite3'));
   const github = new GitHubService(state);
+  const streamClients = new Set();
   let writeQueue = Promise.resolve();
   const serialize = (work) => {
     const result = writeQueue.then(work, work);
@@ -31,21 +33,68 @@ export async function startBroker() {
     try {
       const url = new URL(request.url, 'http://127.0.0.1');
       if (request.method === 'GET' && url.pathname === '/health') {
-        return send(response, 200, { ok: true, pid: process.pid, version: 1 });
+        return send(response, 200, { ok: true, pid: process.pid, version: 2, startedAt: endpoint?.startedAt ?? null });
+      }
+      if (request.method === 'GET' && url.pathname === '/v1/stream') {
+        response.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-store',
+          connection: 'keep-alive'
+        });
+        response.write('event: ready\ndata: {}\n\n');
+        streamClients.add(response);
+        request.on('close', () => streamClients.delete(response));
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/v1/status') {
+        const integrations = await readJsonFile(join(runtime, 'integration-status.json'));
+        return send(response, 200, {
+          broker: { ok: true, pid: process.pid, version: 2, startedAt: endpoint?.startedAt ?? null },
+          agents: state.agentStatus(),
+          projects: state.listProjects(),
+          integrations
+        });
+      }
+      if (request.method === 'GET' && url.pathname === '/v1/projects') {
+        return send(response, 200, { projects: state.listProjects() });
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/projects/register') {
+        const body = await readJson(request);
+        const context = await inspectAndRegister(state, required(body.cwd, 'cwd'), { refresh: body.refresh === true });
+        broadcast(streamClients, 'projects', context);
+        return send(response, 200, context);
+      }
+      if (url.pathname.startsWith('/v1/projects/')) {
+        const projectId = decodeURIComponent(url.pathname.slice('/v1/projects/'.length));
+        if (request.method === 'PATCH') {
+          const value = state.updateProjectPreferences(projectId, await readJson(request));
+          broadcast(streamClients, 'projects', value);
+          return send(response, 200, value);
+        }
+        if (request.method === 'DELETE') {
+          const value = state.deleteProject(projectId);
+          broadcast(streamClients, 'projects', value);
+          return send(response, 200, value);
+        }
       }
       if (request.method === 'GET' && url.pathname === '/v1/todos') {
-        const repo = required(url.searchParams.get('repo'), 'repo');
-        return send(response, 200, await new TodoStore(todoFilePath(resolve(repo))).read());
+        const target = todoTarget(state, {
+          scope: url.searchParams.get('scope'), projectId: url.searchParams.get('projectId'), repo: url.searchParams.get('repo')
+        });
+        return send(response, 200, { ...(await new TodoStore(target.path).read()), scope: target.scope, projectId: target.projectId });
       }
       if (request.method === 'POST' && url.pathname === '/v1/todos') {
         const body = await readJson(request);
         const result = await serialize(() => mutateTodo(state, body));
+        broadcast(streamClients, 'todos', { scope: body.scope, projectId: body.projectId });
         return send(response, 200, result);
       }
       if (request.method === 'POST' && url.pathname === '/v1/events') {
         const body = await readJson(request);
         const key = body.eventKey || eventKey(body.payload ?? body);
-        return send(response, 200, state.recordAgentEvent(body.payload ?? body, key));
+        const value = state.recordAgentEvent(body.payload ?? body, key);
+        broadcast(streamClients, 'agents', body.payload ?? body);
+        return send(response, 200, value);
       }
       if (request.method === 'GET' && url.pathname === '/v1/events') {
         return send(response, 200, { events: state.listAgentEvents(url.searchParams.get('limit') ?? 100) });
@@ -58,7 +107,14 @@ export async function startBroker() {
         }) });
       }
       if (request.method === 'POST' && url.pathname === '/v1/contexts') {
-        return send(response, 200, await serialize(async () => state.upsertAgentContext(await readJson(request))));
+        const body = await readJson(request);
+        const value = await serialize(async () => {
+          const saved = state.upsertAgentContext(body);
+          state.upsertProject(body.repository);
+          return saved;
+        });
+        broadcast(streamClients, 'agents', value);
+        return send(response, 200, value);
       }
       if (request.method === 'DELETE' && url.pathname.startsWith('/v1/contexts/')) {
         return send(response, 200, await serialize(async () => state.deleteAgentContext(decodeURIComponent(url.pathname.slice(13)))));
@@ -68,7 +124,9 @@ export async function startBroker() {
       }
       if (request.method === 'POST' && url.pathname === '/v1/notes') {
         const body = await readJson(request);
-        return send(response, 200, await serialize(async () => state.saveNote({ ...body, id: 'codex-activity' })));
+        const value = await serialize(async () => state.saveNote({ ...body, id: 'codex-activity' }));
+        broadcast(streamClients, 'notes', value);
+        return send(response, 200, value);
       }
       if (request.method === 'DELETE' && url.pathname.startsWith('/v1/notes/')) {
         return send(response, 200, await serialize(async () => state.deleteNote(decodeURIComponent(url.pathname.slice(10)))));
@@ -76,11 +134,38 @@ export async function startBroker() {
       if (request.method === 'GET' && url.pathname === '/v1/outbox') {
         return send(response, 200, { items: state.listOutbox(url.searchParams.get('status')) });
       }
+      if (request.method === 'GET' && url.pathname === '/v1/git/status') {
+        const project = requiredProject(state, url.searchParams.get('projectId'));
+        if (!project.isGitRepository) throw new Error('Git status is only available for Git projects');
+        return send(response, 200, {
+          ...(await inspectGitStatus(project.repoRoot)),
+          todoTracking: await todoTrackingStatus(project.repoRoot)
+        });
+      }
+      if (request.method === 'GET' && url.pathname === '/v1/git/diff') {
+        const project = requiredProject(state, url.searchParams.get('projectId'));
+        if (!project.isGitRepository) throw new Error('Git diff is only available for Git projects');
+        return send(response, 200, await readGitDiff(project.repoRoot, required(url.searchParams.get('path'), 'path'), {
+          staged: url.searchParams.get('staged') === 'true'
+        }));
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/git/repair-todo-ignore') {
+        const body = await readJson(request);
+        const project = requiredProject(state, body.projectId);
+        if (!project.isGitRepository) throw new Error('Ignore repair is only available for Git projects');
+        return send(response, 200, await serialize(() => repairTodoIgnore(project.repoRoot)));
+      }
       if (request.method === 'POST' && url.pathname === '/v1/github') {
         const body = await readJson(request);
         const localRepoRoot = required(body.localRepoRoot, 'localRepoRoot');
         const repositoryOverride = body.owner && body.repo ? `${body.owner}/${body.repo}` : undefined;
-        const context = await inspectRepositoryContext(localRepoRoot, { repositoryOverride });
+        let context = await inspectRepositoryContext(localRepoRoot, { repositoryOverride });
+        const registered = state.getProject(context.projectId);
+        if (registered?.githubAccount) {
+          context = await inspectRepositoryContext(localRepoRoot, {
+            repositoryOverride, expectedGithubAccount: registered.githubAccount
+          });
+        }
         if (!context.syncGitHub) throw new Error(`GitHub sync skipped: ${context.syncReason}`);
         return send(response, 200, await serialize(() => github.execute(body)));
       }
@@ -110,8 +195,12 @@ export async function startBroker() {
 async function mutateTodo(state, body) {
   const idempotent = state.getIdempotent(body.idempotencyKey);
   if (idempotent) return { ...idempotent, replayed: true };
-  const repo = resolve(required(body.repo, 'repo'));
-  const store = new TodoStore(todoFilePath(repo));
+  const target = todoTarget(state, body);
+  if (target.scope === 'repository' && target.repoRoot) {
+    const tracking = await todoTrackingStatus(target.repoRoot);
+    if (tracking.ignored) await repairTodoIgnore(target.repoRoot);
+  }
+  const store = new TodoStore(target.path);
   const result = await store.mutate((file) => {
     const todos = [...file.todos];
     let value;
@@ -138,9 +227,43 @@ async function mutateTodo(state, body) {
     }
     return { file: { schemaVersion: 1, todos }, value };
   });
-  const response = { todo: result.value, todos: result.file.todos };
+  const response = { todo: result.value, todos: result.file.todos, scope: target.scope, projectId: target.projectId };
   state.putIdempotent(body.idempotencyKey, response);
   return response;
+}
+
+async function inspectAndRegister(state, cwd, options = {}) {
+  const repositoryOptions = options.refresh ? { authCache: false } : {};
+  let context = await inspectRepositoryContext(cwd, repositoryOptions);
+  const existing = state.getProject(context.projectId);
+  if (existing?.githubAccount && existing.githubAccount !== context.expectedGithubAccount) {
+    context = await inspectRepositoryContext(cwd, { ...repositoryOptions, expectedGithubAccount: existing.githubAccount });
+  }
+  return state.upsertProject(context);
+}
+
+function requiredProject(state, projectId) {
+  return state.getProject(required(projectId, 'projectId')) || (() => { throw new Error(`Project not found: ${projectId}`); })();
+}
+
+function todoTarget(state, input = {}) {
+  const scope = input.scope || (input.repo || input.projectId ? 'repository' : 'global');
+  if (scope === 'global') return { scope, projectId: null, path: globalTodoFilePath() };
+  if (scope !== 'repository') throw new Error(`Unknown todo scope: ${scope}`);
+  if (input.repo) {
+    const repoRoot = resolve(input.repo);
+    return { scope, projectId: input.projectId ?? null, repoRoot, path: todoFilePath(repoRoot) };
+  }
+  const project = requiredProject(state, input.projectId);
+  if (!project.isGitRepository) throw new Error('Repository todos require a Git project');
+  return { scope, projectId: project.projectId, repoRoot: project.repoRoot, path: todoFilePath(project.repoRoot) };
+}
+
+function broadcast(clients, event, value) {
+  const message = `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`;
+  for (const response of clients) {
+    try { response.write(message); } catch { clients.delete(response); }
+  }
 }
 
 async function acquireOwnership(runtime) {
@@ -209,5 +332,16 @@ function eventKey(payload) {
 async function atomicJson(path, value) {
   const temporary = `${path}.${randomUUID()}.tmp`;
   await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
-  await rename(temporary, path);
+  try {
+    await rename(temporary, path);
+  } catch (error) {
+    if (!['EEXIST', 'EPERM'].includes(error.code)) throw error;
+    await rm(path, { force: true });
+    await rename(temporary, path);
+  }
+}
+
+async function readJsonFile(path) {
+  try { return JSON.parse(await readFile(path, 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }

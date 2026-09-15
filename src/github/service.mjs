@@ -5,7 +5,7 @@ import { IssuesApi } from './issues.mjs';
 import { PullsApi } from './pulls.mjs';
 import { ActionsApi } from './actions.mjs';
 
-const READ_ACTIONS = new Set(['project.get', 'project.items', 'issue.list', 'pr.list', 'pr.get', 'actions.runs']);
+const READ_ACTIONS = new Set(['project.get', 'project.listForRepository', 'project.items', 'issue.list', 'pr.list', 'pr.get', 'pr.reviews', 'actions.runs', 'actions.get', 'actions.logs']);
 
 export class GitHubService {
   constructor(state, client = new GhClient()) {
@@ -49,6 +49,7 @@ export class GitHubService {
   async dispatch(request) {
     switch (request.action) {
       case 'project.get': return this.projects.getProject(request.ownerType, request.owner, request.projectNumber);
+      case 'project.listForRepository': return this.projects.listForRepository(request.owner, request.repo);
       case 'project.items': return this.projects.listItems(request.projectId);
       case 'project.setField': return this.projects.setField(request);
       case 'project.clearField': return this.projects.clearField(request);
@@ -59,8 +60,12 @@ export class GitHubService {
       case 'issue.close': return this.issues.close(request);
       case 'pr.list': return this.pulls.list(request.owner, request.repo, request.state);
       case 'pr.get': return this.pulls.get(request.owner, request.repo, request.number);
+      case 'pr.reviews': return this.pulls.reviews(request.owner, request.repo, request.number);
+      case 'pr.review': return this.pulls.review(request);
       case 'pr.merge': return this.pulls.merge(request);
       case 'actions.runs': return this.actions.runs(request.owner, request.repo, request);
+      case 'actions.get': return this.actions.get(request.owner, request.repo, request.runId);
+      case 'actions.logs': return this.actions.logs(request.owner, request.repo, request.runId);
       case 'actions.rerun': return this.actions.rerun(request);
       case 'actions.cancel': return this.actions.cancel(request);
       default: throw new Error(`Unknown GitHub action: ${request.action}`);

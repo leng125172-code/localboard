@@ -11,6 +11,14 @@ export class PullsApi {
     return this.client.rest('GET', `repos/${owner}/${repo}/pulls/${number}`);
   }
 
+  reviews(owner, repo, number) {
+    return this.client.restPaginated(`repos/${owner}/${repo}/pulls/${number}/reviews`, { per_page: 100 });
+  }
+
+  review({ owner, repo, number, body = '', event = 'COMMENT' }) {
+    return this.client.rest('POST', `repos/${owner}/${repo}/pulls/${number}/reviews`, { body, event });
+  }
+
   merge({ owner, repo, number, method = 'squash', title, message }) {
     return this.client.rest('PUT', `repos/${owner}/${repo}/pulls/${number}/merge`, {
       merge_method: method, commit_title: title, commit_message: message

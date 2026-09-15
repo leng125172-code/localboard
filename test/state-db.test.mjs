@@ -39,3 +39,19 @@ test('keeps concurrent Codex contexts isolated by context key', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('migrates a discovered path from non-Git to Git without duplicate projects', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'localboard-project-migration-'));
+  const state = new StateDatabase(join(root, 'state.sqlite3'));
+  try {
+    state.upsertProject({ projectId: 'path:one', projectKind: 'non-git', repositoryName: 'work', cwd: 'C:/work', isGitRepository: false });
+    state.updateProjectPreferences('path:one', { pinned: true });
+    const migrated = state.upsertProject({ projectId: 'worktree:one', projectKind: 'git', repositoryName: 'work', cwd: 'C:/work', repoRoot: 'C:/work', isGitRepository: true });
+    assert.equal(migrated.pinned, true);
+    assert.equal(state.listProjects().length, 1);
+    assert.equal(state.listProjects()[0].projectId, 'worktree:one');
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

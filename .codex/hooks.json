@@ -8,7 +8,6 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/src/cli.mjs\" hook",
             "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/cli.mjs') hook }\"",
-            "async": true,
             "timeout": 10
           }
         ]
@@ -21,7 +20,6 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/src/cli.mjs\" hook",
             "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/cli.mjs') hook }\"",
-            "async": true,
             "timeout": 10
           }
         ]
@@ -34,7 +32,6 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/src/cli.mjs\" hook",
             "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/cli.mjs') hook }\"",
-            "async": true,
             "timeout": 10
           }
         ]
@@ -47,7 +44,6 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/src/cli.mjs\" hook",
             "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/cli.mjs') hook }\"",
-            "async": true,
             "timeout": 10
           }
         ]
@@ -60,7 +56,6 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/src/cli.mjs\" hook",
             "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/cli.mjs') hook }\"",
-            "async": true,
             "timeout": 10
           }
         ]
@@ -73,7 +68,7 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/src/cli.mjs\" hook",
             "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/cli.mjs') hook }\"",
-            "timeout": 3
+            "timeout": 10
           }
         ]
       }

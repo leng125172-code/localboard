@@ -32,34 +32,47 @@ export async function brokerRequest(path, options = {}) {
 
 export async function ensureBroker() {
   let endpoint = await readEndpoint();
-  if (endpoint && await isHealthy(endpoint)) return endpoint;
+  const current = endpoint ? await health(endpoint) : null;
+  if (current?.ok && Number(current.version) >= 2) return endpoint;
+  if (current?.ok && endpoint?.pid) {
+    try { process.kill(endpoint.pid); } catch {}
+    await sleep(250);
+  }
 
   const daemonPath = fileURLToPath(new URL('../daemon.mjs', import.meta.url));
-  const executable = process.env.LOCALBOARD_NODE || (process.versions.electron ? 'node' : process.execPath);
-  const child = spawn(executable, [daemonPath], {
+  const inElectron = Boolean(process.versions.electron);
+  const executable = process.env.LOCALBOARD_NODE || (inElectron ? process.execPath : process.execPath);
+  const packageRoot = fileURLToPath(new URL('../../', import.meta.url));
+  const args = inElectron
+    ? [...(process.env.LOCALBOARD_PACKAGED_EXECUTABLE === '1' ? [] : process.defaultApp ? [packageRoot] : []), '--broker']
+    : [daemonPath];
+  const childEnv = { ...process.env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  const child = spawn(executable, args, {
     detached: true,
     stdio: 'ignore',
-    windowsHide: true
+    windowsHide: true,
+    env: childEnv
   });
   child.unref();
 
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     await sleep(60);
     endpoint = await readEndpoint();
-    if (endpoint && await isHealthy(endpoint)) return endpoint;
+    const candidate = endpoint ? await health(endpoint) : null;
+    if (candidate?.ok && Number(candidate.version) >= 2) return endpoint;
   }
   throw new Error('LocalBoard broker did not start');
 }
 
-async function isHealthy(endpoint) {
+async function health(endpoint) {
   try {
     const response = await fetch(`http://127.0.0.1:${endpoint.port}/health`, {
       headers: { authorization: `Bearer ${endpoint.token}` },
       signal: AbortSignal.timeout(400)
     });
-    return response.ok;
+    return response.ok ? await response.json() : null;
   } catch {
-    return false;
+    return null;
   }
 }
-

@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 if (Test-Path variable:PSNativeCommandUseErrorActionPreference) { $PSNativeCommandUseErrorActionPreference = $false }
 $sourceRoot = Split-Path -Parent $PSScriptRoot
 if (-not $InstallRoot) { $InstallRoot = Join-Path $env:LOCALAPPDATA 'Programs\LocalBoard' }
-if (-not $TodoRoot) { $TodoRoot = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'LocalBoard\personal-todos' }
+if (-not $TodoRoot) { $TodoRoot = $env:USERPROFILE }
 if (-not $CodexHome) { $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' } }
 if (-not $AgentHome) { $AgentHome = Join-Path $env:USERPROFILE '.agents' }
 $InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
@@ -34,26 +34,15 @@ function Invoke-Installation {
 
   Assert-Command node 'Install Node.js 22.5 or newer, then rerun this installer.'
   Assert-Command npm 'Install npm, then rerun this installer.'
-  Assert-Command git 'Install Git, then rerun this installer.'
   $nodeVersion = (& node -p "process.versions.node").Trim()
   if ([version]$nodeVersion -lt [version]'22.5.0') { throw "Node.js 22.5+ is required; found $nodeVersion." }
-
-  if (-not $SkipGitHub) {
-    Assert-Command gh 'Install GitHub CLI and run: gh auth login --scopes "repo,project,workflow"'
-    $accounts = Get-GitHubAccounts
-    if ($accounts.Count -eq 0) { throw 'GitHub CLI is not authenticated. Run: gh auth login --scopes "repo,project,workflow"' }
-    $GitHubAccount = Select-GitHubAccount $accounts $GitHubAccount $Unattended
-    & gh auth switch --hostname github.com --user $GitHubAccount
-    Assert-LastExitCode 'Unable to activate the selected GitHub account.'
-    $projectNumber = Ensure-GitHubProject $GitHubAccount $ProjectTitle
-  }
 
   $package = Get-Content (Join-Path $sourceRoot 'package.json') -Raw | ConvertFrom-Json
   $releaseId = '{0}-{1}' -f $package.version, (Get-Date -Format 'yyyyMMddHHmmss')
   $releaseRoot = Join-Path $InstallRoot "releases\$releaseId"
   New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
   Copy-AppFiles $sourceRoot $releaseRoot
-  & npm ci --omit=dev --no-audit --no-fund --prefix $releaseRoot
+  & npm ci --no-audit --no-fund --prefix $releaseRoot
   Assert-LastExitCode 'Failed to install LocalBoard desktop dependencies.'
   Ensure-ElectronRuntime $sourceRoot $releaseRoot
 
@@ -70,29 +59,27 @@ function Invoke-Installation {
     --config (Join-Path $CodexHome 'config.toml') `
     --skill-source (Join-Path $releaseRoot '.agents\skills\localboard') `
     --skill-target (Join-Path $AgentHome 'skills\localboard') `
+    --plugin-source (Join-Path $releaseRoot 'integrations\plugins\localboard') `
+    --plugin-target (Join-Path $AgentHome 'plugins\localboard') `
+    --marketplace (Join-Path $AgentHome 'plugins\marketplace.json') `
     --command $hookCommand
   Assert-LastExitCode 'Failed to configure Codex Desktop/CLI integration.'
 
-  if (-not $SkipGitHub) {
-    Ensure-PersonalTodoRepository $TodoRoot $GitHubAccount $RepositoryName $projectNumber $hookCommand
-    Ensure-ProjectLink $GitHubAccount $projectNumber "$GitHubAccount/$RepositoryName"
-    Write-LocalSettings $TodoRoot $GitHubAccount "$GitHubAccount/$RepositoryName" $projectNumber
-  } elseif (-not (Test-Path -LiteralPath $TodoRoot)) {
-    New-Item -ItemType Directory -Path $TodoRoot -Force | Out-Null
-  }
-
-  if (-not $NoShortcuts) { New-LocalBoardShortcuts $binRoot $releaseRoot $TodoRoot }
+  if (-not $NoShortcuts) { New-LocalBoardShortcuts $binRoot $releaseRoot $TodoRoot $InstallRoot }
   if (-not $NoLaunch) { & $hookCommand start --repo $TodoRoot | Out-Null }
 
   [ordered]@{
     installed = $true
     release = $releaseRoot
     command = $hookCommand
-    todoRepository = $TodoRoot
-    githubAccount = if ($SkipGitHub) { $null } else { $GitHubAccount }
-    githubProject = if ($SkipGitHub) { $null } else { "$GitHubAccount/$projectNumber" }
+    globalData = Join-Path $env:LOCALAPPDATA 'LocalBoard\data'
+    githubAccount = $null
+    githubProject = $null
     codexHooks = Join-Path $CodexHome 'hooks.json'
     codexSkill = Join-Path $AgentHome 'skills\localboard'
+    codexMcp = 'mcp_servers.localboard'
+    chatgptPlugin = Join-Path $AgentHome 'plugins\localboard'
+    startup = -not $NoShortcuts
     desktopShortcut = -not $NoShortcuts
     launched = -not $NoLaunch
   } | ConvertTo-Json
@@ -329,7 +316,7 @@ function Write-LocalSettings([string]$RepositoryPath, [string]$Account, [string]
   Write-Utf8File (Join-Path $runtime 'settings.json') ($settings + "`n")
 }
 
-function New-LocalBoardShortcuts([string]$Bin, [string]$Release, [string]$RepositoryPath) {
+function New-LocalBoardShortcuts([string]$Bin, [string]$Release, [string]$RepositoryPath, [string]$Root) {
   $shell = New-Object -ComObject WScript.Shell
   $launcher = Join-Path $Bin 'Start-LocalBoard.ps1'
   $powershell = (Get-Command powershell.exe).Source
@@ -348,6 +335,14 @@ function New-LocalBoardShortcuts([string]$Bin, [string]$Release, [string]$Reposi
     $shortcut.IconLocation = "$electron,0"
     $shortcut.Save()
   }
+  $startupPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\LocalBoard.lnk'
+  $startup = $shell.CreateShortcut($startupPath)
+  $startup.TargetPath = $electron
+  $startup.Arguments = "`"$Release`" --background"
+  $startup.WorkingDirectory = $RepositoryPath
+  $startup.Description = 'LocalBoard tray startup'
+  $startup.IconLocation = "$electron,0"
+  $startup.Save()
 }
 
 Invoke-Installation

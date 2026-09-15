@@ -47,6 +47,14 @@ export class GhClient {
   }
 
   runJson(args) {
+    return this.run(args, true);
+  }
+
+  runText(args) {
+    return this.run(args, false);
+  }
+
+  run(args, parseJson) {
     return new Promise((resolve, reject) => {
       const child = spawn(this.executable, args, { env: this.env, windowsHide: true, shell: false });
       const stdout = [];
@@ -58,11 +66,9 @@ export class GhClient {
         const out = Buffer.concat(stdout).toString('utf8').trim();
         const err = Buffer.concat(stderr).toString('utf8').trim();
         if (code !== 0) return reject(new Error(err || `gh exited with code ${code}`));
-        try {
-          resolve(out ? JSON.parse(out) : {});
-        } catch {
-          reject(new Error(`gh returned invalid JSON: ${out.slice(0, 200)}`));
-        }
+        if (!parseJson) return resolve(out);
+        try { resolve(out ? JSON.parse(out) : {}); }
+        catch { reject(new Error(`gh returned invalid JSON: ${out.slice(0, 200)}`)); }
       });
     });
   }
