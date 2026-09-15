@@ -38,18 +38,23 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
   const configuredRepository = options.repositoryOverride || config.github?.repositories?.[0] || parseGitHubRepository(remoteUrl);
   const githubEnabled = config.github?.enabled !== false;
   const githubConfigured = githubEnabled && Boolean(configuredRepository);
+  const expectedGithubAccount = config.github?.account || null;
   let githubAuthConnected = false;
+  let activeGithubAccount = null;
 
   // Do not even invoke gh unless this is a Git repository with GitHub configured.
   if (githubConfigured && options.checkGitHubAuth !== false) {
-    const authKey = `github.com\0${repoRoot}`;
+    const authKey = `github.com\0${repoRoot}\0${expectedGithubAccount ?? ''}`;
     const cached = options.run === undefined && options.authCache !== false ? githubAuthCache.get(authKey) : null;
     if (cached && Date.now() - cached.checkedAt < Number(options.authCacheTtlMs ?? 15_000)) {
       githubAuthConnected = cached.connected;
+      activeGithubAccount = cached.account;
     } else {
-      githubAuthConnected = (await tryRun(run, 'gh', ['auth', 'status', '--active', '--hostname', 'github.com'], repoRoot)).ok;
+      const auth = await tryRun(run, 'gh', ['auth', 'status', '--active', '--hostname', 'github.com', '--json', 'hosts'], repoRoot);
+      activeGithubAccount = auth.ok ? activeAccountFromStatus(auth.stdout) : null;
+      githubAuthConnected = auth.ok && (!expectedGithubAccount || sameAccount(activeGithubAccount, expectedGithubAccount));
       if (options.run === undefined && options.authCache !== false) {
-        githubAuthCache.set(authKey, { connected: githubAuthConnected, checkedAt: Date.now() });
+        githubAuthCache.set(authKey, { connected: githubAuthConnected, account: activeGithubAccount, checkedAt: Date.now() });
       }
     }
   }
@@ -58,7 +63,9 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
     ? 'github-disabled'
     : !githubConfigured
       ? 'github-not-configured'
-      : !githubAuthConnected
+      : expectedGithubAccount && activeGithubAccount && !sameAccount(activeGithubAccount, expectedGithubAccount)
+        ? 'github-account-mismatch'
+        : !githubAuthConnected
         ? 'github-not-authenticated'
         : 'ready';
   const commonDir = common.ok ? common.stdout.trim() : '.git';
@@ -87,10 +94,26 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
     githubRepository: configuredRepository ?? null,
     githubConfigured,
     githubAuthConnected,
+    activeGithubAccount,
+    expectedGithubAccount,
     syncGitHub: syncReason === 'ready',
     syncReason,
     github: config.github ?? null
   };
+}
+
+export function activeAccountFromStatus(output) {
+  try {
+    const status = JSON.parse(output);
+    const accounts = status.hosts?.['github.com'] ?? [];
+    return accounts.find((account) => account.active && account.state === 'success')?.login ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function sameAccount(left, right) {
+  return String(left ?? '').toLowerCase() === String(right ?? '').toLowerCase();
 }
 
 export function parseGitHubRepository(remoteUrl) {

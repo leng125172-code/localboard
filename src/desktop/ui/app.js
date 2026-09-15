@@ -382,6 +382,12 @@ async function renderActivitySticky(id) {
       document.querySelector('#sticky-contexts').innerHTML = contexts.contexts.length
         ? contexts.contexts.map(contextCard).join('')
         : '<div class="sticky-empty">等待 Codex 上报执行路径…</div>';
+      document.querySelectorAll('#sticky-contexts [data-remove-context]').forEach((button) => {
+        button.onclick = async () => {
+          await api.request(`/v1/contexts/${encodeURIComponent(button.dataset.removeContext)}`, { method: 'DELETE' });
+          await refreshContexts();
+        };
+      });
     } catch {}
   };
   await refreshContexts();
@@ -405,7 +411,10 @@ function contextRow(context) {
 
 function contextCard(context) {
   const repo = context.repository;
-  return `<article class="context-card ${escapeHtml(context.status)}"><div class="context-title"><strong>${escapeHtml(repo.repositoryName || '非 Git 目录')}</strong><span>${escapeHtml(statusLabel(context.status))}</span></div>
+  const remove = context.status === 'stale'
+    ? `<button type="button" class="context-delete" data-remove-context="${escapeHtml(context.contextKey)}" title="删除此已失效会话">删除</button>`
+    : '';
+  return `<article class="context-card ${escapeHtml(context.status)}"><div class="context-title"><strong>${escapeHtml(repo.repositoryName || '非 Git 目录')}</strong><span class="context-status">${escapeHtml(statusLabel(context.status))}${remove}</span></div>
     <div>${escapeHtml(repo.branch || repo.syncReason)}</div>
     <small title="${escapeHtml(repo.cwd)}">${escapeHtml(repo.cwd)}</small>
     <small>${escapeHtml(syncLabel(repo))} · ${escapeHtml((context.sessionId || context.contextKey).slice(0, 14))}</small></article>`;
@@ -421,7 +430,8 @@ function syncLabel(repository) {
     'not-git': '仅路径，不同步 GitHub',
     'github-disabled': 'GitHub 同步已关闭',
     'github-not-configured': 'GitHub 未配置',
-    'github-not-authenticated': 'GitHub 未登录'
+    'github-not-authenticated': 'GitHub 未登录',
+    'github-account-mismatch': `GitHub 账户不匹配（需要 ${repository.expectedGithubAccount}）`
   };
   return labels[repository.syncReason] || repository.syncReason;
 }

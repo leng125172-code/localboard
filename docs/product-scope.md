@@ -20,7 +20,7 @@
 - 自定义 Project view、iteration、parent/sub-issue、issue type、dependencies/blockers。
 - 托盘、全局快捷键、深链、开机启动、窗口布局恢复、多显示器/DPI。
 - MCP server，使 Codex 以结构化 tool 调用替代 shell CLI；仍复用 broker 和权限门。
-- Hook 版本检测、Hook trust 提示和兼容旧 Codex 的能力探测；Skill/Hook 保持文档化手动安装，不建设统一安装器。
+- Windows 本地安装器已覆盖版本化应用、CLI PATH、桌面/开始菜单快捷方式、Codex Hook/Skill 合并安装与个人待办仓库初始化；后续补自动更新、签名和卸载保留策略。
 
 ## P2：发行与治理
 
@@ -43,6 +43,6 @@
 1. **主窗口仓库切换**：已可从右上角仓库入口或会话列表切换；切换会重新探测目标 Git/worktree、加载对应个人待办并重新执行 GitHub 权限门。后续增加收藏与最近仓库排序。
 2. **异常退出与活跃状态**：`UserPromptSubmit`/`Stop` 分别更新 active/idle；异常退出的 active 卡片 30 分钟后标 stale、24 小时后隐藏，并可手动移除。后续如需更实时再增加低频 heartbeat。
 3. **Skill 重复发布**：已优先使用 `CODEX_SESSION_ID`/`CODEX_THREAD_ID` 做稳定 upsert；没有这些变量时保留随机键以保证并行实例绝不覆盖，并提供手动移除卡片入口。
-4. **GitHub 账号与限流缓存**：API 只读响应已在单 broker 中短期缓存，写操作后失效。后续仍需把 GHES host/profile 纳入仓库身份，并在认证 401/403 后主动失效认证缓存。
+4. **GitHub 账号与限流缓存**：安装器要求从多个 `gh` 账户中显式选择个人主账户，仓库配置与运行期门禁会阻止活跃账户不匹配的同步；API 只读响应已在单 broker 中短期缓存，写操作后失效。后续仍需把 GHES host/profile 纳入仓库身份，并在认证 401/403 后主动失效认证缓存。
 5. **worktree 待办语义**：已确定跟随 branch/worktree，保证个人待办仍是可提交、可审计的仓库文件。发生跨分支冲突时必须显式解决，不做后台 last-write-wins；后续补充专用冲突界面。
 6. **单实例恢复**：Electron 锁可防普通重复启动，broker 锁可防重复写入；还需要托盘入口、崩溃重启和窗口失联恢复，尤其要处理自定义 `--user-data-dir` 绕开 Electron 默认锁的情况。

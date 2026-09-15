@@ -13,6 +13,9 @@ export async function githubContext(repoRoot, options = {}) {
   if (!repository.isGitRepository) throw new Error('GitHub sync skipped: current path is not an initialized Git repository');
   if (!repository.githubConfigured) throw new Error('GitHub sync skipped: no GitHub remote or LocalBoard GitHub configuration');
   if (options.requireAuth !== false && !repository.githubAuthConnected) {
+    if (repository.syncReason === 'github-account-mismatch') {
+      throw new Error(`GitHub sync skipped: active gh account is ${repository.activeGithubAccount}; switch to ${repository.expectedGithubAccount}`);
+    }
     throw new Error('GitHub sync skipped: gh is not authenticated; run gh auth login');
   }
   const nameWithOwner = repository.githubRepository;

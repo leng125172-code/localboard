@@ -1,6 +1,7 @@
 {
   "github": {
     "enabled": true,
+    "account": "your-personal-account",
     "owner": "your-user-or-org",
     "ownerType": "user",
     "projectNumber": 1,

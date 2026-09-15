@@ -14,9 +14,11 @@ const artifacts = resolve(root, '.artifacts');
 const fixtureRoot = await mkdtemp(join(tmpdir(), 'localboard-ui-worktree-'));
 const fixtureName = basename(fixtureRoot);
 const fixtureKey = 'e2e:workspace-switch';
+const staleFixtureKey = 'e2e:stale-delete';
 await mkdir(artifacts, { recursive: true });
 await execFileAsync('git', ['init'], { cwd: fixtureRoot, windowsHide: true });
 await publishExecutionContext({ cwd: fixtureRoot, contextKey: fixtureKey, sessionId: 'e2e', source: 'e2e' });
+await publishExecutionContext({ cwd: fixtureRoot, contextKey: staleFixtureKey, sessionId: 'e2e-stale', source: 'e2e', status: 'stale' });
 
 const electronApp = await electron.launch({ args: ['.'], cwd: root });
 const pageErrors = [];
@@ -44,7 +46,7 @@ try {
   assert.deepEqual(pageErrors, []);
 
   const fixtureRow = main.locator('#view .row').filter({ hasText: fixtureName });
-  await fixtureRow.locator('[data-switch-workspace]').click();
+  await fixtureRow.first().locator('[data-switch-workspace]').click();
   await main.waitForFunction((name) => document.querySelector('#workspace-switcher strong')?.textContent === name && !document.querySelector('#view .loading'), fixtureName);
   assert.equal(await main.locator('#page-title').textContent(), '个人待办');
   assert.match(await main.locator('#workspace-switcher').textContent(), /GitHub 未配置/);
@@ -67,6 +69,10 @@ try {
   await main.waitForFunction(() => !document.querySelector('#view .loading'));
   const sticky = await findWindow(electronApp, (page) => page.locator('.sticky').count());
   await sticky.screenshot({ path: resolve(artifacts, 'activity-sticky.png') });
+  const staleDelete = sticky.locator(`[data-remove-context="${staleFixtureKey}"]`);
+  await staleDelete.waitFor({ state: 'visible' });
+  await staleDelete.click();
+  await sticky.waitForFunction((key) => !document.querySelector(`[data-remove-context="${key}"]`), staleFixtureKey);
   const nativeSticky = await electronApp.browserWindow(sticky);
   await sticky.locator('[data-window-action="minimize"]').click();
   await main.waitForTimeout(150);
@@ -116,6 +122,7 @@ try {
 } finally {
   await electronApp.close().catch(() => {});
   await brokerRequest(`/v1/contexts/${encodeURIComponent(fixtureKey)}`, { method: 'DELETE' }).catch(() => {});
+  await brokerRequest(`/v1/contexts/${encodeURIComponent(staleFixtureKey)}`, { method: 'DELETE' }).catch(() => {});
   await rm(fixtureRoot, { recursive: true, force: true });
 }
 

@@ -82,6 +82,9 @@ h1 { margin: 4px 0 0; font: 700 34px/1.15 Georgia, "Songti SC", serif; }
 .context-card.idle { border-left-color: #d18b41; }
 .context-card.stale { border-left-color: #909995; opacity: .76; }
 .context-card.interrupted { border-left-color: #b1493f; }
+.context-status { display: inline-flex; align-items: center; gap: 6px; }
+.context-delete { border: 0; border-radius: 6px; padding: 2px 6px; background: rgba(157,52,45,.1); color: #8a302b; font-size: 11px; cursor: pointer; }
+.context-delete:hover { background: rgba(157,52,45,.2); }
 .context-title { display: flex; justify-content: space-between; gap: 8px; }
 .context-title span { color: rgba(30,41,37,.58); text-transform: uppercase; font-size: 10px; }
 .context-card small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: rgba(30,41,37,.65); }

@@ -26,6 +26,7 @@ Sticky windows ──────────────────┘       �
 - 没有 GitHub remote 或 `.localboard/config.json` 返回 `github-not-configured`，且不会调用 `gh`。
 - GitHub 配置显式 `enabled=false` 返回 `github-disabled`。
 - `gh` 未认证返回 `github-not-authenticated`。
+- 仓库配置了 `github.account` 且当前 `gh` 活跃账户不同，返回 `github-account-mismatch`，避免多账户环境误同步。
 - 只有 `ready` 对应 `syncGitHub=true`。
 
 门禁不只依赖调用方自律：broker 的 GitHub 入口要求 `localRepoRoot`，并再次执行同一探测。认证结果在常驻进程中缓存 15 秒，GitHub API 只读结果默认缓存 30 秒；UI 的显式刷新绕过缓存，任何写操作清空相关读缓存。

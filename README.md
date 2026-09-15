@@ -18,6 +18,29 @@ LocalBoard 是一个本地优先的 GitHub Project 桌面伴侣：把个人待�
 
 要求 Node.js 22.5+、GitHub CLI (`gh`)；桌面端需要安装 Electron 依赖。
 
+### Windows 本地安装（推荐）
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-LocalBoard.ps1
+```
+
+安装器会完成以下工作：
+
+- 安装版本化应用到 `%LOCALAPPDATA%\Programs\LocalBoard`，并把稳定的 `localboard` 命令加入用户 PATH。
+- 合并配置到 `%CODEX_HOME%\hooks.json`、启用 `config.toml` 的 hooks，并安装用户级 LocalBoard Skill；不会覆盖其他 Hook 或 Codex 设置。
+- 创建桌面和开始菜单快捷方式。手动启动默认打开个人待办仓库；Codex Desktop/CLI 的 `SessionStart` 也会启动，Electron 与 broker 两层单实例锁防止重复进程和重复便签。
+- 默认在“文档”目录创建 `LocalBoard\personal-todos`，初始化 Git/LocalBoard Hook，并在所选个人 GitHub 账户下创建私有的 `localboard-personal-todos` 仓库后完成首次 push。
+
+如果 `gh` 尚未登录，安装器会停止并提示执行 `gh auth login --scopes "repo,project,workflow"`。存在多个已登录账户时，交互安装会要求选择个人主账户；无人值守安装必须显式传入，例如：
+
+```powershell
+.\Install-LocalBoard.ps1 -GitHubAccount leng125172-code
+```
+
+所选账户会写入待办仓库的 `.localboard/config.json`。如果以后切换了 `gh` 活跃账户，LocalBoard 会显示账户不匹配并暂停该仓库的 GitHub 同步，避免误用另一个账户。安装后重启 Codex Desktop/CLI，使用户级 Hook 与 Skill 完整生效；Codex 仍可能按自身安全机制要求确认新的 Hook。
+
+### 从源码运行
+
 ```powershell
 npm install
 npm link
@@ -75,6 +98,7 @@ Skill 首先发布当前 CWD，并执行同步资格探测：
 - 尚未 `git init`：只把执行路径显示在便签，不运行任何 GitHub 查询。
 - 已初始化 Git、但没有 GitHub remote/配置：允许本地个人待办，不运行 GitHub 查询。
 - GitHub 已配置、但 `gh` 未登录：显示“GitHub 未登录”，不运行 Project/Issue/PR/Actions 同步。
+- 仓库指定了个人主账户、但当前 `gh` 活跃账户不同：显示“GitHub 账户不匹配”，不运行 GitHub 同步。
 - 只有 `syncGitHub=true` 才允许访问 GitHub。
 
 这道门同时存在于 Skill、CLI/桌面端和 broker 的 `/v1/github` 入口；直接调用 broker 也必须提供可验证的本地 Git 仓库路径，不能绕过前置条件。

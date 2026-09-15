@@ -8,9 +8,10 @@ import { brokerRequest, ensureBroker } from './core/broker-client.mjs';
 import { findGitRoot } from './core/paths.mjs';
 import { githubContext } from './core/repo-config.mjs';
 import { inspectRepositoryContext } from './core/repository-context.mjs';
-import { publishCodexHook, publishExecutionContext } from './core/context-publisher.mjs';
+import { publishExecutionContext } from './core/context-publisher.mjs';
 import { runPreCommit, runPrePush } from './core/git-hooks.mjs';
 import { launchDesktop } from './core/desktop-launcher.mjs';
+import { handleCodexHook } from './core/codex-hook.mjs';
 
 const execFileAsync = promisify(execFile);
 const { positionals, options } = parseArgs(process.argv.slice(2));
@@ -184,7 +185,7 @@ async function hookCommand() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   try {
-    await publishCodexHook(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+    await handleCodexHook(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
   } catch {
     // Lifecycle reporting must not block Codex.
   }
