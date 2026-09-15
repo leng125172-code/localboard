@@ -44,6 +44,16 @@ test('merges LocalBoard into the unconditional matcher group without dropping ot
   assert.deepEqual(merged[1].hooks, [existing, replacement]);
 });
 
+test('replaces packaged executable hooks using the --hook argument', () => {
+  const stale = { type: 'command', command: '"C:\\Apps\\LocalBoard.exe" --hook', timeout: 10 };
+  const replacement = { type: 'command', command: '"D:\\LocalBoard\\LocalBoard.exe" --hook', timeout: 10 };
+
+  const merged = mergeLocalBoardHook([{ hooks: [stale] }], replacement);
+
+  assert.equal(merged.length, 1);
+  assert.deepEqual(merged[0].hooks, [replacement]);
+});
+
 test('Codex setup preserves existing hooks and is idempotent', async () => {
   const root = await mkdtemp(join(tmpdir(), 'localboard-codex-config-'));
   try {

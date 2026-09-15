@@ -72,7 +72,7 @@ function isUnconditionalMatcherGroup(entry) {
 }
 
 function isLocalBoardHook(hook) {
-  return /(?:^|[\\/])localboard(?:\.cmd)?["']?\s+hook(?:\s|$)/i.test(hook?.commandWindows || hook?.command || '');
+  return /(?:^|[\\/])localboard(?:\.cmd|\.exe)?["']?\s+(?:--)?hook(?:\s|$)/i.test(hook?.commandWindows || hook?.command || '');
 }
 
 export function enableHooks(text) {
