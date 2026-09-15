@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { StateDatabase } from '../src/core/state-db.mjs';
@@ -42,14 +42,32 @@ test('keeps concurrent Codex contexts isolated by context key', async () => {
 
 test('migrates a discovered path from non-Git to Git without duplicate projects', async () => {
   const root = await mkdtemp(join(tmpdir(), 'localboard-project-migration-'));
+  const work = join(root, 'work');
+  await mkdir(work);
   const state = new StateDatabase(join(root, 'state.sqlite3'));
   try {
-    state.upsertProject({ projectId: 'path:one', projectKind: 'non-git', repositoryName: 'work', cwd: 'C:/work', isGitRepository: false });
+    state.upsertProject({ projectId: 'path:one', projectKind: 'non-git', repositoryName: 'work', cwd: work, isGitRepository: false });
     state.updateProjectPreferences('path:one', { pinned: true });
-    const migrated = state.upsertProject({ projectId: 'worktree:one', projectKind: 'git', repositoryName: 'work', cwd: 'C:/work', repoRoot: 'C:/work', isGitRepository: true });
+    const migrated = state.upsertProject({ projectId: 'worktree:one', projectKind: 'git', repositoryName: 'work', cwd: work, repoRoot: work, isGitRepository: true });
     assert.equal(migrated.pinned, true);
     assert.equal(state.listProjects().length, 1);
     assert.equal(state.listProjects()[0].projectId, 'worktree:one');
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('hides reported projects after their working directory is removed', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'localboard-project-expiry-'));
+  const work = join(root, 'temporary-work');
+  await mkdir(work);
+  const state = new StateDatabase(join(root, 'state.sqlite3'));
+  try {
+    state.upsertProject({ projectId: 'path:temp', projectKind: 'non-git', repositoryName: 'temp', cwd: work, isGitRepository: false });
+    assert.equal(state.listProjects().length, 1);
+    await rm(work, { recursive: true, force: true });
+    assert.equal(state.listProjects().length, 0);
   } finally {
     state.close();
     await rm(root, { recursive: true, force: true });

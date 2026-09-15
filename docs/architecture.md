@@ -14,6 +14,7 @@ Sticky windows ──────────────────┘       �
 ```
 
 - Desktop 用 Electron 的 `requestSingleInstanceLock` 防止重复应用；第二次启动只聚焦已有窗口。托盘进程支持开机静默启动。应用内部只维护一个固定 ID 为 `codex-activity` 的执行便签，置顶和跨虚拟桌面显示可分别切换。
+- 项目注册与路径查看分离：Codex/Agent 上报和显式 CLI 登记才写入项目表；Desktop 切换或查看目录只做上下文检查。项目列表还会隐藏已经不存在的工作目录，E2E 使用隔离的运行时目录。
 - broker 用原子目录锁保证每个 OS 用户只有一个 owner。PID 存活检查、5 秒创建宽限期和健康检查共同处理并发启动、崩溃残锁与 PID 复用。
 - UI 和 broker 解耦。关闭 UI 不终止后台服务；多个 Codex 进程只做客户端。broker 健康响应带协议版本，升级时客户端只终止已通过 bearer 健康检查确认的旧 LocalBoard broker。
 - 每仓库 JSON 写入使用锁目录、临时文件和原子 rename。broker 再增加进程内串行队列。

@@ -60,8 +60,10 @@ export async function startBroker() {
       }
       if (request.method === 'POST' && url.pathname === '/v1/projects/register') {
         const body = await readJson(request);
-        const context = await inspectAndRegister(state, required(body.cwd, 'cwd'), { refresh: body.refresh === true });
-        broadcast(streamClients, 'projects', context);
+        const context = body.register === false
+          ? await inspectProject(state, required(body.cwd, 'cwd'), { refresh: body.refresh === true })
+          : await inspectAndRegister(state, required(body.cwd, 'cwd'), { refresh: body.refresh === true });
+        if (body.register !== false) broadcast(streamClients, 'projects', context);
         return send(response, 200, context);
       }
       if (url.pathname.startsWith('/v1/projects/')) {
@@ -233,13 +235,24 @@ async function mutateTodo(state, body) {
 }
 
 async function inspectAndRegister(state, cwd, options = {}) {
+  return state.upsertProject(await inspectProject(state, cwd, options));
+}
+
+async function inspectProject(state, cwd, options = {}) {
   const repositoryOptions = options.refresh ? { authCache: false } : {};
   let context = await inspectRepositoryContext(cwd, repositoryOptions);
   const existing = state.getProject(context.projectId);
   if (existing?.githubAccount && existing.githubAccount !== context.expectedGithubAccount) {
     context = await inspectRepositoryContext(cwd, { ...repositoryOptions, expectedGithubAccount: existing.githubAccount });
   }
-  return state.upsertProject(context);
+  return existing ? {
+    ...context,
+    pinned: existing.pinned,
+    githubAccount: existing.githubAccount,
+    favoriteProjects: existing.favoriteProjects,
+    createdAt: existing.createdAt,
+    lastSeenAt: existing.lastSeenAt
+  } : context;
 }
 
 function requiredProject(state, projectId) {

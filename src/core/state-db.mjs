@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -239,7 +239,9 @@ export class StateDatabase {
     const cutoff = new Date(Date.now() - maxAgeDays * 86400_000).toISOString();
     return this.db.prepare(`SELECT payload_json AS payloadJson,pinned,github_account AS githubAccount,
       favorite_projects_json AS favoriteProjectsJson,created_at AS createdAt,last_seen_at AS lastSeenAt
-      FROM projects WHERE pinned=1 OR last_seen_at>=? ORDER BY pinned DESC,last_seen_at DESC`).all(cutoff).map(projectRow);
+      FROM projects WHERE pinned=1 OR last_seen_at>=? ORDER BY pinned DESC,last_seen_at DESC`).all(cutoff)
+      .map(projectRow)
+      .filter((project) => existsSync(project.repoRoot ?? project.cwd));
   }
 
   getProject(projectId) {

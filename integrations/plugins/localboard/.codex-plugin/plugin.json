@@ -1,6 +1,6 @@
 {
   "name": "localboard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local-first project dashboard, agent activity, and personal todo tools.",
   "author": {
     "name": "LocalBoard"
@@ -18,7 +18,7 @@
       "Add a personal todo for this repository.",
       "Show my global LocalBoard todos."
     ],
-    "brandColor": "#176B5B"
+    "brandColor": "#2563EB"
   },
   "mcpServers": "./.mcp.json"
 }

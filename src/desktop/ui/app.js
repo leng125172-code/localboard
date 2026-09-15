@@ -11,7 +11,13 @@ async function renderApplication() {
   const savedWorkspace = startupWorkspace || localStorage.getItem('localboard.workspace');
   let context = await api.context(savedWorkspace || undefined);
   const registry = await api.request('/v1/projects');
-  applicationState = { context, projects: registry.projects, active: 'todos', loadId: 0 };
+  applicationState = {
+    context,
+    projects: registry.projects,
+    active: 'todos',
+    todoScope: context.repository.isGitRepository ? 'repository' : 'global',
+    loadId: 0
+  };
   app.innerHTML = `
     <div class="shell">
       <aside class="project-rail">
@@ -24,7 +30,7 @@ async function renderApplication() {
         <button class="connection" id="service-status"><span class="dot"></span><span>本地服务</span><strong id="agent-count">0</strong></button>
       </aside>
       <main class="content">
-        <header class="topbar"><div><div class="eyebrow">Focus workspace</div><h1 id="page-title">个人待办</h1></div><button class="repo-pill" id="workspace-switcher" type="button" title="查看并切换 Codex 仓库"></button></header>
+        <header class="topbar"><div><div class="eyebrow">当前工作区</div><h1 id="page-title">个人待办</h1></div><button class="repo-pill" id="workspace-switcher" type="button" title="查看并切换 Codex 仓库"></button></header>
         <div id="error"></div><section id="view"></section>
       </main>
     </div>`;
@@ -61,7 +67,7 @@ async function navigate(tab, options = {}) {
 }
 
 async function load(tab, context, loadId, options) {
-  if (tab === 'todos') return await loadTodos(context, loadId);
+  if (tab === 'todos') return await loadTodos(context, loadId, options);
   if (tab === 'git') return await loadGit(context, loadId);
   if (tab === 'status') return await loadStatus(loadId);
   if (tab === 'agents') return await loadAgents(loadId);
@@ -72,24 +78,45 @@ async function load(tab, context, loadId, options) {
   if (tab === 'actions') return await loadActions(context, loadId, options);
 }
 
-async function loadTodos(context, loadId) {
+async function loadTodos(context, loadId, options = {}) {
   const repository = context.repository;
-  const scope = repository.isGitRepository ? 'repository' : 'global';
+  const scope = repository.isGitRepository && (options.scope || applicationState.todoScope) !== 'global'
+    ? 'repository' : 'global';
+  applicationState.todoScope = scope;
   const query = new URLSearchParams({ scope });
   if (scope === 'repository') query.set('projectId', repository.projectId);
   const data = await api.request(`/v1/todos?${query}`);
   const view = currentView(loadId);
   if (!view) return;
   const storageText = scope === 'repository' ? `${repository.repoRoot}\\.localboard\\todos.json` : 'LocalBoard 应用数据目录（全局）';
-  view.innerHTML = `<div class="scope-banner"><strong>${scope === 'repository' ? '当前仓库待办' : '全局个人待办'}</strong><span>保存于 ${escapeHtml(storageText)}</span></div>
+  view.innerHTML = `${repository.isGitRepository ? `<div class="todo-scope-tabs" role="tablist" aria-label="待办范围">
+      <button role="tab" data-todo-scope="repository" class="${scope === 'repository' ? 'active' : ''}" aria-selected="${scope === 'repository'}">当前仓库</button>
+      <button role="tab" data-todo-scope="global" class="${scope === 'global' ? 'active' : ''}" aria-selected="${scope === 'global'}">全局待办</button>
+    </div>` : ''}
+    <div class="scope-banner"><strong>${scope === 'repository' ? '当前仓库待办' : '全局个人待办'}</strong><span>保存于 ${escapeHtml(storageText)}</span></div>
     <div class="toolbar"><button class="primary" id="add-todo">新建待办</button><button class="secondary" id="refresh">刷新</button></div>
     <div class="grid">${data.todos.length ? data.todos.map(todoCard).join('') : `<div class="empty">还没有${scope === 'repository' ? '当前仓库' : '全局'}待办。</div>`}</div>`;
+  document.querySelectorAll('[data-todo-scope]').forEach((button) => {
+    button.onclick = () => navigate('todos', { scope: button.dataset.todoScope });
+  });
   document.querySelector('#add-todo').onclick = () => todoDialog(context, scope);
-  document.querySelector('#refresh').onclick = () => navigate('todos');
+  document.querySelector('#refresh').onclick = () => navigate('todos', { scope });
   document.querySelectorAll('[data-done]').forEach((button) => button.onclick = async () => {
     await api.request('/v1/todos', { method: 'POST', body: { scope, projectId: scope === 'repository' ? repository.projectId : null, operation: 'update', id: button.dataset.done,
       idempotencyKey: crypto.randomUUID(), patch: { status: 'done' } } });
-    await navigate('todos');
+    await navigate('todos', { scope });
+  });
+  document.querySelectorAll('[data-edit-todo]').forEach((button) => {
+    button.onclick = () => todoDialog(context, scope, data.todos.find((todo) => todo.id === button.dataset.editTodo));
+  });
+  document.querySelectorAll('[data-remove-todo]').forEach((button) => button.onclick = async () => {
+    const todo = data.todos.find((item) => item.id === button.dataset.removeTodo);
+    if (!todo || !window.confirm(`删除待办“${todo.title}”？`)) return;
+    await api.request('/v1/todos', { method: 'POST', body: {
+      scope, projectId: scope === 'repository' ? repository.projectId : null,
+      operation: 'remove', id: todo.id, idempotencyKey: crypto.randomUUID()
+    } });
+    await navigate('todos', { scope });
   });
 }
 
@@ -97,26 +124,36 @@ function todoCard(todo) {
   return `<article class="card todo-card ${todo.status}"><div class="meta">${escapeHtml(todo.status)} · P${todo.priority}</div>
     <h3>${escapeHtml(todo.title)}</h3><p>${escapeHtml(todo.description || ' ')}</p>
     <div class="meta">${todo.tags.map((tag) => `#${escapeHtml(tag)}`).join(' ')}</div>
-    <div class="todo-actions">${todo.status !== 'done' ? `<button data-done="${todo.id}">完成</button>` : ''}</div></article>`;
+    <div class="todo-actions">${todo.status !== 'done' ? `<button data-done="${escapeHtml(todo.id)}">完成</button>` : ''}
+      <button data-edit-todo="${escapeHtml(todo.id)}">编辑</button><button class="danger-link" data-remove-todo="${escapeHtml(todo.id)}">删除</button></div></article>`;
 }
 
-function todoDialog(context, scope) {
+function todoDialog(context, scope, todo = null) {
   const overlay = document.createElement('div');
   overlay.className = 'dialog-backdrop';
-  overlay.innerHTML = `<form class="dialog form"><h2>新建个人待办</h2><input name="title" placeholder="要完成什么？" required autofocus />
-    <textarea name="description" placeholder="补充说明"></textarea><input name="tags" placeholder="标签，以逗号分隔" />
-    <select name="priority"><option value="0">普通</option><option value="1">P1</option><option value="2">P2</option><option value="3">P3 紧急</option></select>
+  overlay.innerHTML = `<form class="dialog form"><h2>${todo ? '编辑个人待办' : '新建个人待办'}</h2>
+    <input name="title" placeholder="要完成什么？" value="${escapeHtml(todo?.title || '')}" required autofocus />
+    <textarea name="description" placeholder="补充说明">${escapeHtml(todo?.description || '')}</textarea>
+    <input name="tags" placeholder="标签，以逗号分隔" value="${escapeHtml((todo?.tags || []).join(','))}" />
+    <select name="priority">${[0, 1, 2, 3].map((priority) => `<option value="${priority}" ${Number(todo?.priority || 0) === priority ? 'selected' : ''}>${priority === 0 ? '普通' : `P${priority}${priority === 3 ? ' 紧急' : ''}`}</option>`).join('')}</select>
     <div class="toolbar"><button class="primary">保存</button><button type="button" class="secondary" id="cancel">取消</button></div></form>`;
   document.body.append(overlay);
   overlay.querySelector('#cancel').onclick = () => overlay.remove();
   overlay.querySelector('form').onsubmit = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await api.request('/v1/todos', { method: 'POST', body: { scope, projectId: scope === 'repository' ? context.repository.projectId : null, operation: 'add', idempotencyKey: crypto.randomUUID(), todo: {
-      title: form.get('title'), description: form.get('description'), tags: String(form.get('tags')).split(',').filter(Boolean), priority: Number(form.get('priority'))
-    } } });
+    const value = {
+      title: form.get('title'), description: form.get('description'),
+      tags: String(form.get('tags')).split(',').map((tag) => tag.trim()).filter(Boolean),
+      priority: Number(form.get('priority'))
+    };
+    await api.request('/v1/todos', { method: 'POST', body: {
+      scope, projectId: scope === 'repository' ? context.repository.projectId : null,
+      operation: todo ? 'update' : 'add', id: todo?.id, idempotencyKey: crypto.randomUUID(),
+      ...(todo ? { patch: value } : { todo: value })
+    } });
     overlay.remove();
-    await navigate('todos');
+    await navigate('todos', { scope });
   };
 }
 
@@ -147,7 +184,7 @@ async function refreshProjectChrome() {
 function renderFeatureNavigation() {
   const repository = applicationState.context.repository;
   const entries = [
-    ['todos', repository.isGitRepository ? '仓库个人待办' : '全局个人待办'],
+    ['todos', '个人待办'],
     ...(repository.isGitRepository ? [['git', '源代码管理']] : []),
     ...(repository.githubConfigured ? [
       ['project', 'GitHub Projects'], ['issues', 'Issues'], ['prs', 'Pull Requests'], ['actions', 'Actions']
@@ -540,6 +577,7 @@ async function switchWorkspace(cwd) {
     const context = await api.context(cwd);
     if (switchId !== applicationState.loadId) return;
     applicationState.context = context;
+    applicationState.todoScope = context.repository.isGitRepository ? 'repository' : 'global';
     localStorage.setItem('localboard.workspace', context.cwd);
     await refreshProjectChrome();
     await navigate('todos');
@@ -574,7 +612,7 @@ async function renderActivitySticky(id) {
     <div class="sticky-scroll">
       <section><h2>1. Codex 执行 <span id="sticky-agent-count"></span></h2><div class="sticky-contexts" id="sticky-contexts"></div></section>
       <section><h2>2. 全局个人待办</h2><div id="sticky-global-todos"></div></section>
-      <section><h2>3. 仓库书签</h2><div class="bookmark-strip" id="sticky-bookmarks"></div></section>
+      <section><h2>3. 仓库待办</h2><div class="bookmark-tabs" id="sticky-bookmarks" role="tablist" aria-label="切换仓库待办"></div><div id="sticky-repo-todos"></div></section>
       <section class="memo"><h2>4. 便签</h2><textarea aria-label="共享便签内容" placeholder="支持 Markdown 与 - [ ] 清单；Codex 不会覆盖这里">${escapeHtml(note.body)}</textarea></section>
     </div><div class="sticky-foot">本地保存 · 自动保存 · 多会话隔离</div></div>`;
   const textarea = document.querySelector('textarea');
@@ -598,6 +636,7 @@ async function renderActivitySticky(id) {
     document.querySelector('.sticky').style.background = preferences.color;
     document.body.style.background = preferences.color;
   };
+  let selectedStickyProjectId = null;
   const refreshSticky = async () => {
     try {
       const [contexts, todos, projects] = await Promise.all([
@@ -611,9 +650,42 @@ async function renderActivitySticky(id) {
       document.querySelector('#sticky-global-todos').innerHTML = todos.todos.length ? todos.todos.slice(0, 8).map((todo) => `<button class="sticky-todo ${todo.status}" data-global-todo="${todo.id}"><span>${todo.status === 'done' ? '✓' : '○'}</span>${escapeHtml(todo.title)}</button>`).join('') : '<div class="sticky-empty">暂无全局待办</div>';
       const summaries = await Promise.all(projects.projects.filter((project) => project.isGitRepository).slice(0, 12).map(async (project) => {
         const repoTodos = await api.request(`/v1/todos?scope=repository&projectId=${encodeURIComponent(project.projectId)}`).catch(() => ({ todos: [] }));
-        return { project, count: repoTodos.todos.filter((todo) => todo.status !== 'done').length };
+        return { project, todos: repoTodos.todos };
       }));
-      document.querySelector('#sticky-bookmarks').innerHTML = summaries.length ? summaries.map(({ project, count }) => `<article class="bookmark"><strong>${escapeHtml(project.repositoryName)}</strong><span>${project.githubConfigured ? escapeHtml(project.githubRepository) : '本地 Git'}</span><small>${count} 个仓库待办${project.syncGitHub ? ' · GitHub 已连接' : ''}</small></article>`).join('') : '<div class="sticky-empty">暂无仓库书签</div>';
+      if (!summaries.some(({ project }) => project.projectId === selectedStickyProjectId)) {
+        selectedStickyProjectId = summaries[0]?.project.projectId || null;
+      }
+      const tabs = document.querySelector('#sticky-bookmarks');
+      tabs.innerHTML = summaries.length ? summaries.map(({ project }) => `<button type="button" role="tab"
+        aria-selected="${project.projectId === selectedStickyProjectId}" class="${project.projectId === selectedStickyProjectId ? 'active' : ''}"
+        data-sticky-project="${escapeHtml(project.projectId)}" title="${escapeHtml(project.repoRoot)}">${escapeHtml(project.repositoryName)}${project.syncGitHub ? '<i></i>' : ''}</button>`).join('')
+        : '<div class="sticky-empty">等待 Codex 从仓库目录启动…</div>';
+      const renderRepositoryTodos = () => {
+        const selected = summaries.find(({ project }) => project.projectId === selectedStickyProjectId);
+        const host = document.querySelector('#sticky-repo-todos');
+        if (!selected) return host.innerHTML = '';
+        host.innerHTML = selected.todos.length
+          ? selected.todos.slice(0, 10).map((todo) => `<button class="sticky-todo ${todo.status}" data-repo-todo="${escapeHtml(todo.id)}"><span>${todo.status === 'done' ? '✓' : '○'}</span>${escapeHtml(todo.title)}</button>`).join('')
+          : '<div class="sticky-empty compact">该仓库暂无个人待办</div>';
+        host.querySelectorAll('[data-repo-todo]').forEach((button) => button.onclick = async () => {
+          const todo = selected.todos.find((item) => item.id === button.dataset.repoTodo);
+          await api.request('/v1/todos', { method: 'POST', body: {
+            scope: 'repository', projectId: selected.project.projectId, operation: 'update', id: todo.id,
+            idempotencyKey: crypto.randomUUID(), patch: { status: todo.status === 'done' ? 'open' : 'done' }
+          } });
+          await refreshSticky();
+        });
+      };
+      tabs.querySelectorAll('[data-sticky-project]').forEach((button) => button.onclick = () => {
+        selectedStickyProjectId = button.dataset.stickyProject;
+        tabs.querySelectorAll('[data-sticky-project]').forEach((tab) => {
+          const active = tab.dataset.stickyProject === selectedStickyProjectId;
+          tab.classList.toggle('active', active);
+          tab.setAttribute('aria-selected', String(active));
+        });
+        renderRepositoryTodos();
+      });
+      renderRepositoryTodos();
       document.querySelectorAll('#sticky-contexts [data-remove-context]').forEach((button) => {
         button.onclick = async () => {
           await api.request(`/v1/contexts/${encodeURIComponent(button.dataset.removeContext)}`, { method: 'DELETE' });

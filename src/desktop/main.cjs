@@ -78,7 +78,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:context', async (_event, requestedCwd, refresh = false) => {
     const cwd = path.resolve(typeof requestedCwd === 'string' && requestedCwd ? requestedCwd : process.cwd());
     const context = { cwd, platform: process.platform };
-    context.repository = await brokerRequest('/v1/projects/register', { method: 'POST', body: { cwd, refresh } });
+    context.repository = await brokerRequest('/v1/projects/register', {
+      method: 'POST', body: { cwd, refresh, register: false }
+    });
     context.cwd = context.repository.repoRoot || context.repository.cwd;
     if (context.repository.syncGitHub) {
       const [owner, repo] = context.repository.githubRepository.split('/');
