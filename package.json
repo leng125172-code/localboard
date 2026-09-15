@@ -13,15 +13,17 @@
     "daemon": "node src/daemon.mjs",
     "cli": "node src/cli.mjs",
     "test": "node --test",
+    "test:ui": "node e2e/electron-ui.mjs",
     "check": "node --check src/cli.mjs && node --check src/daemon.mjs && node --test"
   },
   "engines": {
     "node": ">=22.5"
   },
   "devDependencies": {
-    "electron": "^38.0.0"
+    "electron": "^44.3.0",
+    "playwright": "^1.63.0"
   },
   "allowScripts": {
-    "electron@38.8.6": true
+    "electron@44.3.0": true
   }
 }

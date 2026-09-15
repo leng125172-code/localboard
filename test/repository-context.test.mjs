@@ -22,6 +22,7 @@ test('does not invoke gh when GitHub has no remote or configuration', async () =
     const command = args.join(' ');
     if (command === 'rev-parse --show-toplevel') return { stdout: 'C:/repo\n' };
     if (command === 'rev-parse --git-common-dir') return { stdout: '.git\n' };
+    if (command === 'rev-parse --git-dir') return { stdout: '.git\n' };
     if (command === 'branch --show-current') return { stdout: 'main\n' };
     if (command === 'rev-parse HEAD') return { stdout: 'abc123\n' };
     if (command.startsWith('status ')) return { stdout: '' };
@@ -40,6 +41,7 @@ test('reports configured but unauthenticated GitHub without enabling sync', asyn
     if (executable === 'gh') throw new Error('not authenticated');
     if (command === 'rev-parse --show-toplevel') return { stdout: 'C:/repo\n' };
     if (command === 'rev-parse --git-common-dir') return { stdout: '.git\n' };
+    if (command === 'rev-parse --git-dir') return { stdout: '.git/worktrees/feature\n' };
     if (command === 'branch --show-current') return { stdout: 'main\n' };
     if (command === 'rev-parse HEAD') return { stdout: 'abc123\n' };
     if (command.startsWith('status ')) return { stdout: '' };
@@ -52,4 +54,6 @@ test('reports configured but unauthenticated GitHub without enabling sync', asyn
   assert.equal(context.githubAuthConnected, false);
   assert.equal(context.syncGitHub, false);
   assert.equal(context.syncReason, 'github-not-authenticated');
+  assert.equal(context.isLinkedWorktree, true);
+  assert.equal(context.personalTodoScope, 'branch-worktree');
 });

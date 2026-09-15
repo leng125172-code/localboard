@@ -8,7 +8,7 @@ LocalBoard 是一个本地优先的 GitHub Project 桌面伴侣：把个人待�
 - Git pre-commit Hook 自动暂存个人待办；pre-push Hook 阻止遗漏未提交的待办变更。
 - GitHub Project V2 字段与草稿 Issue 可回写，Issue 可创建、编辑、关闭。
 - PR 与 Actions 默认只读；合并、重跑、取消必须额外传 `--yes`。
-- 桌面主窗口和 Codex 执行便签均为单实例；一个便签同时展示多个隔离的 Codex 会话卡片。
+- 桌面主窗口和 Codex 执行便签均为单实例；一个便签同时展示多个隔离的 Codex 会话卡片，主窗口可从会话列表切换仓库。
 - 多个 Codex/Agent/CLI 进程共享一个 loopback broker，由它串行写文件并持久化幂等记录与 outbox。
 - Codex 生命周期 Hook 和项目级 Skill 源码已放在仓库中。
 
@@ -24,6 +24,7 @@ npm link
 gh auth login --scopes "repo,project,workflow"
 Copy-Item localboard.config.example.json .localboard/config.json
 npm test
+npm run test:ui
 npm start
 ```
 
@@ -67,6 +68,12 @@ Skill 首先发布当前 CWD，并执行同步资格探测：
 - GitHub 已配置、但 `gh` 未登录：显示“GitHub 未登录”，不运行 Project/Issue/PR/Actions 同步。
 - 只有 `syncGitHub=true` 才允许访问 GitHub。
 
+这道门同时存在于 Skill、CLI/桌面端和 broker 的 `/v1/github` 入口；直接调用 broker 也必须提供可验证的本地 Git 仓库路径，不能绕过前置条件。
+
+有 `CODEX_SESSION_ID` 或 `CODEX_THREAD_ID` 时，Skill 发布会稳定更新当前会话自己的卡片；没有会话标识时才生成随机键，保证并行 CLI 仍不会互相覆盖。`UserPromptSubmit` 将会话标为 active，`Stop` 标为 idle；异常退出的 active 卡片 30 分钟后显示 stale，24 小时后从活动便签隐藏。
+
+GitHub Project 已支持文本、数字、日期、单选与 iteration 字段；写入前比较 `updatedAt`，远端已变化时要求刷新确认。Project、Issues、PR、Actions 都支持分页读取；只读响应短期缓存 30 秒，点击“刷新”会强制绕过缓存，任何写操作会使缓存失效。
+
 ## 数据位置
 
 | 数据 | 位置 | 是否进 Git |
@@ -83,4 +90,4 @@ Windows 默认位于 `%LOCALAPPDATA%\LocalBoard`。数据库使用 SQLite WAL；
 
 ## 当前边界
 
-这是第一阶段仓库，不是已完成的 GitHub Project 全功能替代品。桌面 UI 已接入个人待办、单实例执行便签、多 Codex 会话隔离、Project 状态与标题回写、Issue 创建/关闭、PR 和 Actions 列表；三方冲突处理、完整字段编辑与通知中心列入下一里程碑。详见 [产品范围](docs/product-scope.md) 与 [架构](docs/architecture.md)。
+这是第一阶段仓库，不是已完成的 GitHub Project 全功能替代品。桌面 UI 已接入个人待办、多仓库切换、单实例执行便签、多 Codex 会话隔离、Project 字段与标题回写、Issue 创建/关闭、PR 和 Actions 列表；完整三方冲突中心与通知中心列入下一里程碑。详见 [产品范围](docs/product-scope.md) 与 [架构](docs/architecture.md)。

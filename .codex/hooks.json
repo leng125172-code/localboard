@@ -1,6 +1,19 @@
 {
   "description": "Record Codex and subagent lifecycle activity in the local LocalBoard broker.",
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/src/cli.mjs\" hook",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& { $root = git rev-parse --show-toplevel; node (Join-Path $root 'src/cli.mjs') hook }\"",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

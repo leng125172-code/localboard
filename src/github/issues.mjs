@@ -4,7 +4,7 @@ export class IssuesApi {
   }
 
   async list(owner, repo, state = 'open') {
-    const items = await this.client.rest('GET', `repos/${owner}/${repo}/issues`, { state, per_page: 100 });
+    const items = await this.client.restPaginated(`repos/${owner}/${repo}/issues`, { state, per_page: 100 });
     return items.filter((item) => !item.pull_request);
   }
 
@@ -24,11 +24,19 @@ export class IssuesApi {
     });
   }
 
-  update({ owner, repo, number, ...fields }) {
-    return this.client.rest('PATCH', `repos/${owner}/${repo}/issues/${number}`, fields);
+  update({ owner, repo, number, title, body, state, stateReason, labels, assignees, milestone }) {
+    return this.client.rest('PATCH', `repos/${owner}/${repo}/issues/${number}`, {
+      title,
+      body,
+      state,
+      state_reason: stateReason,
+      labels,
+      assignees,
+      milestone
+    });
   }
 
   close({ owner, repo, number, reason = 'completed' }) {
-    return this.update({ owner, repo, number, state: 'closed', state_reason: reason });
+    return this.update({ owner, repo, number, state: 'closed', stateReason: reason });
   }
 }

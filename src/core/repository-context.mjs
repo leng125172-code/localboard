@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { readRepoConfig } from './config-file.mjs';
 
 const execFileAsync = promisify(execFile);
+const githubAuthCache = new Map();
 
 export async function inspectRepositoryContext(cwd = process.cwd(), options = {}) {
   const run = options.run ?? runCommand;
@@ -26,12 +27,13 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
   const config = options.config ?? await readRepoConfig(repoRoot);
   const results = await Promise.all([
     tryRun(run, 'git', ['rev-parse', '--git-common-dir'], repoRoot),
+    tryRun(run, 'git', ['rev-parse', '--git-dir'], repoRoot),
     tryRun(run, 'git', ['branch', '--show-current'], repoRoot),
     tryRun(run, 'git', ['rev-parse', 'HEAD'], repoRoot),
     tryRun(run, 'git', ['status', '--porcelain', '--untracked-files=no'], repoRoot),
     tryRun(run, 'git', ['config', '--get', 'remote.origin.url'], repoRoot)
   ]);
-  const [common, branch, head, status, remote] = results;
+  const [common, gitDirResult, branch, head, status, remote] = results;
   const remoteUrl = sanitizeRemoteUrl(remote.ok ? remote.stdout.trim() : null);
   const configuredRepository = options.repositoryOverride || config.github?.repositories?.[0] || parseGitHubRepository(remoteUrl);
   const githubEnabled = config.github?.enabled !== false;
@@ -40,7 +42,16 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
 
   // Do not even invoke gh unless this is a Git repository with GitHub configured.
   if (githubConfigured && options.checkGitHubAuth !== false) {
-    githubAuthConnected = (await tryRun(run, 'gh', ['auth', 'status', '--active', '--hostname', 'github.com'], repoRoot)).ok;
+    const authKey = `github.com\0${repoRoot}`;
+    const cached = options.run === undefined && options.authCache !== false ? githubAuthCache.get(authKey) : null;
+    if (cached && Date.now() - cached.checkedAt < Number(options.authCacheTtlMs ?? 15_000)) {
+      githubAuthConnected = cached.connected;
+    } else {
+      githubAuthConnected = (await tryRun(run, 'gh', ['auth', 'status', '--active', '--hostname', 'github.com'], repoRoot)).ok;
+      if (options.run === undefined && options.authCache !== false) {
+        githubAuthCache.set(authKey, { connected: githubAuthConnected, checkedAt: Date.now() });
+      }
+    }
   }
 
   const syncReason = !githubEnabled
@@ -51,8 +62,11 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
         ? 'github-not-authenticated'
         : 'ready';
   const commonDir = common.ok ? common.stdout.trim() : '.git';
+  const gitDir = gitDirResult.ok ? gitDirResult.stdout.trim() : commonDir;
+  const resolvedCommonDir = resolve(repoRoot, commonDir);
+  const resolvedGitDir = resolve(repoRoot, gitDir);
   const repositoryKey = createHash('sha256')
-    .update(`${repoRoot}\0${commonDir}\0${configuredRepository ?? remoteUrl ?? ''}`)
+    .update(`${repoRoot}\0${resolvedCommonDir}\0${configuredRepository ?? remoteUrl ?? ''}`)
     .digest('hex');
 
   return {
@@ -62,6 +76,9 @@ export async function inspectRepositoryContext(cwd = process.cwd(), options = {}
     repositoryKey,
     repositoryName: repoRoot.split(/[\\/]/).at(-1),
     gitCommonDir: commonDir,
+    gitDir,
+    isLinkedWorktree: resolvedGitDir !== resolvedCommonDir,
+    personalTodoScope: 'branch-worktree',
     branch: branch.ok ? branch.stdout.trim() || '(detached)' : '(unknown)',
     headSha: head.ok ? head.stdout.trim() : null,
     workingTreeDirty: status.ok && Boolean(status.stdout.trim()),
@@ -107,4 +124,3 @@ async function tryRun(run, executable, args, cwd) {
     return { ok: false, stdout: String(error?.stdout ?? ''), error };
   }
 }
-

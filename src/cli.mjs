@@ -85,27 +85,30 @@ async function projectCommand(command, args, opts) {
     throw new Error('Project number is not configured; pass --project-number');
   }
   if (command === 'get') return github({ action: 'project.get', ownerType: context.ownerType,
-    owner: context.projectOwner, projectNumber: context.projectNumber });
+    owner: context.projectOwner, projectNumber: context.projectNumber }, context);
   if (command === 'pull') {
     const project = await github({ action: 'project.get', ownerType: context.ownerType,
-      owner: context.projectOwner, projectNumber: context.projectNumber });
-    const items = await github({ action: 'project.items', projectId: project.id });
+      owner: context.projectOwner, projectNumber: context.projectNumber }, context);
+    const items = await github({ action: 'project.items', projectId: project.id }, context);
     return { project, items };
   }
   if (command === 'set-field') {
     const projectId = opts.projectId || (await resolveProject(context)).id;
     return github({ action: 'project.setField', projectId, itemId: required(args[0], 'item-id'),
       fieldId: required(args[1], 'field-id'), valueType: required(args[2], 'value-type'),
-      value: required(args[3], 'value'), idempotencyKey: opts.idempotencyKey || randomUUID() });
+      value: required(args[3], 'value'), expectedUpdatedAt: opts.expectedUpdatedAt,
+      idempotencyKey: opts.idempotencyKey || randomUUID() }, context);
   }
   if (command === 'clear-field') {
     const projectId = opts.projectId || (await resolveProject(context)).id;
     return github({ action: 'project.clearField', projectId, itemId: required(args[0], 'item-id'),
-      fieldId: required(args[1], 'field-id'), idempotencyKey: opts.idempotencyKey || randomUUID() });
+      fieldId: required(args[1], 'field-id'), expectedUpdatedAt: opts.expectedUpdatedAt,
+      idempotencyKey: opts.idempotencyKey || randomUUID() }, context);
   }
   if (command === 'update-draft') {
     return github({ action: 'project.updateDraft', draftIssueId: required(args[0], 'draft-issue-id'),
-      title: opts.title, body: opts.body, idempotencyKey: opts.idempotencyKey || randomUUID() });
+      title: opts.title, body: opts.body, expectedUpdatedAt: opts.expectedUpdatedAt,
+      idempotencyKey: opts.idempotencyKey || randomUUID() }, context);
   }
   throw new Error(`Unknown project command: ${command}`);
 }
@@ -113,37 +116,37 @@ async function projectCommand(command, args, opts) {
 async function issueCommand(command, args, opts) {
   const context = await githubContext(await findGitRoot(opts.repo), opts);
   const base = { owner: context.owner, repo: context.repo };
-  if (command === 'list') return github({ action: 'issue.list', ...base, state: opts.state ?? 'open' });
+  if (command === 'list') return github({ action: 'issue.list', ...base, state: opts.state ?? 'open' }, context);
   if (command === 'create') return github({ action: 'issue.create', ...base,
     title: required(args[0], 'title'), body: opts.body ?? '', labels: splitList(opts.labels),
-    assignees: splitList(opts.assignees), idempotencyKey: opts.idempotencyKey || randomUUID() });
+    assignees: splitList(opts.assignees), idempotencyKey: opts.idempotencyKey || randomUUID() }, context);
   if (command === 'close') return github({ action: 'issue.close', ...base,
     number: Number(required(args[0], 'number')), reason: opts.reason ?? 'completed',
-    idempotencyKey: opts.idempotencyKey || randomUUID() });
+    idempotencyKey: opts.idempotencyKey || randomUUID() }, context);
   if (command === 'update') return github({ action: 'issue.update', ...base,
     number: Number(required(args[0], 'number')), title: opts.title, body: opts.body,
-    state: opts.state, idempotencyKey: opts.idempotencyKey || randomUUID() });
+    state: opts.state, idempotencyKey: opts.idempotencyKey || randomUUID() }, context);
   throw new Error(`Unknown issue command: ${command}`);
 }
 
 async function prCommand(command, args, opts) {
   const context = await githubContext(await findGitRoot(opts.repo), opts);
   const base = { owner: context.owner, repo: context.repo };
-  if (command === 'list') return github({ action: 'pr.list', ...base, state: opts.state ?? 'open' });
-  if (command === 'get') return github({ action: 'pr.get', ...base, number: Number(required(args[0], 'number')) });
+  if (command === 'list') return github({ action: 'pr.list', ...base, state: opts.state ?? 'open' }, context);
+  if (command === 'get') return github({ action: 'pr.get', ...base, number: Number(required(args[0], 'number')) }, context);
   if (command === 'merge') return github({ action: 'pr.merge', ...base, number: Number(required(args[0], 'number')),
-    method: opts.method ?? 'squash', allowWrite: Boolean(opts.yes), idempotencyKey: opts.idempotencyKey || randomUUID() });
+    method: opts.method ?? 'squash', allowWrite: Boolean(opts.yes), idempotencyKey: opts.idempotencyKey || randomUUID() }, context);
   throw new Error(`Unknown pr command: ${command}`);
 }
 
 async function actionsCommand(command, args, opts) {
   const context = await githubContext(await findGitRoot(opts.repo), opts);
   const base = { owner: context.owner, repo: context.repo };
-  if (command === 'runs') return github({ action: 'actions.runs', ...base, branch: opts.branch, status: opts.status });
+  if (command === 'runs') return github({ action: 'actions.runs', ...base, branch: opts.branch, status: opts.status }, context);
   if (command === 'rerun') return github({ action: 'actions.rerun', ...base, runId: required(args[0], 'run-id'),
-    failedOnly: Boolean(opts.failedOnly), allowWrite: Boolean(opts.yes), idempotencyKey: opts.idempotencyKey || randomUUID() });
+    failedOnly: Boolean(opts.failedOnly), allowWrite: Boolean(opts.yes), idempotencyKey: opts.idempotencyKey || randomUUID() }, context);
   if (command === 'cancel') return github({ action: 'actions.cancel', ...base, runId: required(args[0], 'run-id'),
-    allowWrite: Boolean(opts.yes), idempotencyKey: opts.idempotencyKey || randomUUID() });
+    allowWrite: Boolean(opts.yes), idempotencyKey: opts.idempotencyKey || randomUUID() }, context);
   throw new Error(`Unknown actions command: ${command}`);
 }
 
@@ -186,11 +189,14 @@ async function hookCommand() {
 async function resolveProject(context) {
   if (!context.projectNumber) throw new Error('Project number is not configured; pass --project-number');
   return github({ action: 'project.get', ownerType: context.ownerType, owner: context.projectOwner,
-    projectNumber: context.projectNumber });
+    projectNumber: context.projectNumber }, context);
 }
 
-function github(body) {
-  return brokerRequest('/v1/github', { method: 'POST', body, timeoutMs: 60_000 });
+function github(body, context) {
+  return brokerRequest('/v1/github', { method: 'POST', body: {
+    ...body,
+    localRepoRoot: context.repository.repoRoot
+  }, timeoutMs: 60_000 });
 }
 
 async function installGitHooks(repoRoot) {

@@ -1,6 +1,7 @@
 {
   "description": "Publish each Codex session's current repository context to the single LocalBoard activity sticky.",
   "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "localboard hook", "commandWindows": "localboard hook", "async": true, "timeout": 10 }] }],
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "localboard hook", "commandWindows": "localboard hook", "async": true, "timeout": 10 }] }],
     "SubagentStart": [{ "hooks": [{ "type": "command", "command": "localboard hook", "commandWindows": "localboard hook", "async": true, "timeout": 10 }] }],
     "SubagentStop": [{ "hooks": [{ "type": "command", "command": "localboard hook", "commandWindows": "localboard hook", "async": true, "timeout": 10 }] }],

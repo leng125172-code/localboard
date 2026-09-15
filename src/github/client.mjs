@@ -30,6 +30,22 @@ export class GhClient {
     return this.runJson(args);
   }
 
+  async restPaginated(endpoint, fields = {}, options = {}) {
+    const perPage = Number(fields.per_page ?? 100);
+    const maxPages = Number(options.maxPages ?? 20);
+    const values = [];
+    let firstResponse;
+    for (let page = 1; page <= maxPages; page += 1) {
+      const response = await this.rest('GET', endpoint, { ...fields, per_page: perPage, page });
+      firstResponse ??= response;
+      const batch = options.listKey ? response?.[options.listKey] : response;
+      if (!Array.isArray(batch)) throw new Error(`Paginated GitHub response is missing ${options.listKey || 'an array'}`);
+      values.push(...batch);
+      if (batch.length < perPage) break;
+    }
+    return options.listKey ? { ...firstResponse, [options.listKey]: values } : values;
+  }
+
   runJson(args) {
     return new Promise((resolve, reject) => {
       const child = spawn(this.executable, args, { env: this.env, windowsHide: true, shell: false });
@@ -51,4 +67,3 @@ export class GhClient {
     });
   }
 }
-

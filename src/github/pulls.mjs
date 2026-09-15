@@ -4,7 +4,7 @@ export class PullsApi {
   }
 
   list(owner, repo, state = 'open') {
-    return this.client.rest('GET', `repos/${owner}/${repo}/pulls`, { state, per_page: 100 });
+    return this.client.restPaginated(`repos/${owner}/${repo}/pulls`, { state, per_page: 100 });
   }
 
   get(owner, repo, number) {
@@ -17,4 +17,3 @@ export class PullsApi {
     });
   }
 }
-

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { GhClient } from './client.mjs';
 import { ProjectsApi } from './projects.mjs';
 import { IssuesApi } from './issues.mjs';
@@ -17,7 +17,15 @@ export class GitHubService {
   }
 
   async execute(request) {
-    if (READ_ACTIONS.has(request.action)) return this.dispatch(request);
+    if (READ_ACTIONS.has(request.action)) {
+      const { refresh: _refresh, cacheTtlSeconds: _cacheTtlSeconds, ...cacheRequest } = request;
+      const key = `read:${createHash('sha256').update(stableJson(cacheRequest)).digest('hex')}`;
+      const cached = request.refresh === true ? null : this.state.getGitHubCache(key, request.cacheTtlSeconds ?? 30);
+      if (cached !== null) return cached;
+      const result = await this.dispatch(request);
+      this.state.putGitHubCache(key, result);
+      return result;
+    }
     const key = request.idempotencyKey || randomUUID();
     const cached = this.state.getIdempotent(key);
     if (cached) return { ...cached, replayed: true };
@@ -30,6 +38,7 @@ export class GitHubService {
       const result = await this.dispatch({ ...request, idempotencyKey: key });
       this.state.markOutbox(outbox.id, 'done');
       this.state.putIdempotent(key, result);
+      this.state.clearGitHubCache();
       return result;
     } catch (error) {
       this.state.markOutbox(outbox.id, 'failed', error.message);
@@ -57,4 +66,10 @@ export class GitHubService {
       default: throw new Error(`Unknown GitHub action: ${request.action}`);
     }
   }
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
 }

@@ -21,6 +21,9 @@ test('broker is a single writer and replays an idempotent mutation', async () =>
     assert.equal(first.todos.length, 1);
     assert.equal(second.todos.length, 1);
     assert.equal(second.replayed, true);
+    await assert.rejects(() => brokerRequest('/v1/github', {
+      endpoint: broker.endpoint, method: 'POST', body: { action: 'issue.list', owner: 'me', repo: 'repo' }
+    }), /localRepoRoot is required/);
   } finally {
     await broker.close();
     if (previous === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = previous;

@@ -20,7 +20,7 @@
 - 自定义 Project view、iteration、parent/sub-issue、issue type、dependencies/blockers。
 - 托盘、全局快捷键、深链、开机启动、窗口布局恢复、多显示器/DPI。
 - MCP server，使 Codex 以结构化 tool 调用替代 shell CLI；仍复用 broker 和权限门。
-- Skill/Hook 安装器、版本检测、Hook trust 提示和兼容旧 Codex 的能力探测。
+- Hook 版本检测、Hook trust 提示和兼容旧 Codex 的能力探测；Skill/Hook 保持文档化手动安装，不建设统一安装器。
 
 ## P2：发行与治理
 
@@ -40,10 +40,9 @@
 
 ## 多 Codex 场景仍需处理的问题
 
-1. **主窗口仓库切换**：便签已能同时展示多个 Codex 仓库，但主窗口当前仍绑定首次启动时的 CWD。下一步应允许点击会话卡片切换工作区，并为每个仓库分别加载待办与 GitHub 权限门。
-2. **异常退出与活跃状态**：正常 `SessionEnd` 会移除活动卡片，但进程崩溃收不到事件；当前用 24 小时 TTL 兜底。应加入低频 heartbeat、stale 状态和手动清理，避免把崩溃会话长期显示为 active。
-3. **Skill 重复发布**：Hook 有稳定 `session_id`，同一会话可安全 upsert；单独运行 Skill/CLI 时没有官方会话 ID，只能生成随机键以保证不覆盖并行实例。需要由 Hook 注入会话键，或提供一次性 claim/lease，才能同时做到去重与隔离。
-4. **GitHub 账号与限流缓存**：每次上下文发布都执行认证探测会增加进程和 API 前置开销。应按 host/profile 短期缓存认证结果，并在 401/403 后立即失效；GHES 与多账号必须把 host/profile 纳入仓库身份。
-5. **worktree 待办语义**：Hook 安装路径已支持 worktree，但 `.localboard/todos.json` 是跟随分支还是仓库共享仍需产品选择。跟随分支会产生合并冲突，共享则不能只存 tracked 文件。
+1. **主窗口仓库切换**：已可从右上角仓库入口或会话列表切换；切换会重新探测目标 Git/worktree、加载对应个人待办并重新执行 GitHub 权限门。后续增加收藏与最近仓库排序。
+2. **异常退出与活跃状态**：`UserPromptSubmit`/`Stop` 分别更新 active/idle；异常退出的 active 卡片 30 分钟后标 stale、24 小时后隐藏，并可手动移除。后续如需更实时再增加低频 heartbeat。
+3. **Skill 重复发布**：已优先使用 `CODEX_SESSION_ID`/`CODEX_THREAD_ID` 做稳定 upsert；没有这些变量时保留随机键以保证并行实例绝不覆盖，并提供手动移除卡片入口。
+4. **GitHub 账号与限流缓存**：API 只读响应已在单 broker 中短期缓存，写操作后失效。后续仍需把 GHES host/profile 纳入仓库身份，并在认证 401/403 后主动失效认证缓存。
+5. **worktree 待办语义**：已确定跟随 branch/worktree，保证个人待办仍是可提交、可审计的仓库文件。发生跨分支冲突时必须显式解决，不做后台 last-write-wins；后续补充专用冲突界面。
 6. **单实例恢复**：Electron 锁可防普通重复启动，broker 锁可防重复写入；还需要托盘入口、崩溃重启和窗口失联恢复，尤其要处理自定义 `--user-data-dir` 绕开 Electron 默认锁的情况。
-7. **可执行安装升级**：用户级 Skill、Hook 与全局 CLI 应由安装器统一部署并记录版本；升级时需要兼容旧 Hook、提示 Codex trust，并可安全卸载而不覆盖第三方 Hook。

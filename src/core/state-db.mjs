@@ -79,6 +79,24 @@ export class StateDatabase {
       .run(key, JSON.stringify(result), new Date().toISOString());
   }
 
+  getGitHubCache(key, maxAgeSeconds = 30) {
+    const row = this.db.prepare('SELECT value_json AS valueJson, fetched_at AS fetchedAt FROM github_cache WHERE cache_key=?').get(key);
+    if (!row) return null;
+    if (Date.now() - new Date(row.fetchedAt).getTime() > Number(maxAgeSeconds) * 1000) return null;
+    return JSON.parse(row.valueJson);
+  }
+
+  putGitHubCache(key, value) {
+    this.db.prepare(`
+      INSERT INTO github_cache(cache_key,value_json,fetched_at) VALUES (?,?,?)
+      ON CONFLICT(cache_key) DO UPDATE SET value_json=excluded.value_json,fetched_at=excluded.fetched_at
+    `).run(key, JSON.stringify(value), new Date().toISOString());
+  }
+
+  clearGitHubCache() {
+    return { deleted: this.db.prepare('DELETE FROM github_cache').run().changes };
+  }
+
   recordAgentEvent(payload, eventKey) {
     const result = this.db.prepare(`
       INSERT OR IGNORE INTO agent_events(event_key, session_id, turn_id, event_name, cwd, payload_json, created_at)
@@ -134,10 +152,15 @@ export class StateDatabase {
   listAgentContexts(options = {}) {
     const includeEnded = options.includeEnded !== false;
     const activeSince = new Date(Date.now() - Number(options.maxAgeHours ?? 24) * 60 * 60 * 1000).toISOString();
+    const staleBefore = Date.now() - Number(options.staleAfterMinutes ?? 30) * 60 * 1000;
     const rows = includeEnded
-      ? this.db.prepare('SELECT payload_json AS payloadJson FROM agent_contexts ORDER BY updated_at DESC').all()
-      : this.db.prepare("SELECT payload_json AS payloadJson FROM agent_contexts WHERE status != 'ended' AND updated_at >= ? ORDER BY updated_at DESC").all(activeSince);
-    return rows.map((row) => JSON.parse(row.payloadJson));
+      ? this.db.prepare('SELECT payload_json AS payloadJson, updated_at AS updatedAt FROM agent_contexts ORDER BY updated_at DESC').all()
+      : this.db.prepare("SELECT payload_json AS payloadJson, updated_at AS updatedAt FROM agent_contexts WHERE status != 'ended' AND updated_at >= ? ORDER BY updated_at DESC").all(activeSince);
+    return rows.map((row) => {
+      const value = JSON.parse(row.payloadJson);
+      if (value.status === 'active' && new Date(row.updatedAt).getTime() < staleBefore) return { ...value, status: 'stale' };
+      return value;
+    });
   }
 
   deleteAgentContext(contextKey) {

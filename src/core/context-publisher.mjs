@@ -4,8 +4,9 @@ import { inspectRepositoryContext } from './repository-context.mjs';
 
 export async function publishExecutionContext(input = {}, options = {}) {
   const request = options.brokerRequest ?? brokerRequest;
+  const env = options.env ?? process.env;
   const repository = await inspectRepositoryContext(input.cwd ?? process.cwd(), options.repositoryOptions);
-  const sessionId = input.sessionId ?? null;
+  const sessionId = input.sessionId ?? env.CODEX_SESSION_ID ?? env.CODEX_THREAD_ID ?? null;
   const agentId = input.agentId ?? null;
   const contextKey = input.contextKey || (sessionId
     ? `codex:${sessionId}:${agentId ?? 'main'}`

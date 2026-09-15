@@ -41,7 +41,7 @@ export class ProjectsApi {
                   ... on Issue { id number title body state url updatedAt repository { nameWithOwner } }
                   ... on PullRequest { id number title body state url isDraft updatedAt repository { nameWithOwner } }
                 }
-                fieldValues(first: 50) { nodes {
+                fieldValues(first: 100) { nodes {
                   ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { id name } } }
                   ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { id name } } }
                   ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { id name } } }
@@ -61,7 +61,8 @@ export class ProjectsApi {
     return items;
   }
 
-  async setField({ projectId, itemId, fieldId, valueType, value, idempotencyKey }) {
+  async setField({ projectId, itemId, fieldId, valueType, value, idempotencyKey, expectedUpdatedAt }) {
+    await this.assertUnchanged(itemId, expectedUpdatedAt, 'Project item');
     const shapes = {
       text: { scalar: 'String!', member: 'text' },
       number: { scalar: 'Float!', member: 'number' },
@@ -83,7 +84,8 @@ export class ProjectsApi {
     return data.data.updateProjectV2ItemFieldValue;
   }
 
-  async clearField({ projectId, itemId, fieldId, idempotencyKey }) {
+  async clearField({ projectId, itemId, fieldId, idempotencyKey, expectedUpdatedAt }) {
+    await this.assertUnchanged(itemId, expectedUpdatedAt, 'Project item');
     const data = await this.client.graphql(`
       mutation($project: ID!, $item: ID!, $field: ID!, $clientMutationId: String) {
         clearProjectV2ItemFieldValue(input: {
@@ -94,7 +96,8 @@ export class ProjectsApi {
     return data.data.clearProjectV2ItemFieldValue;
   }
 
-  async updateDraft({ draftIssueId, title, body, idempotencyKey }) {
+  async updateDraft({ draftIssueId, title, body, idempotencyKey, expectedUpdatedAt }) {
+    await this.assertUnchanged(draftIssueId, expectedUpdatedAt, 'Draft issue');
     const data = await this.client.graphql(`
       mutation($id: ID!, $title: String, $body: String, $clientMutationId: String) {
         updateProjectV2DraftIssue(input: {
@@ -103,5 +106,24 @@ export class ProjectsApi {
       }
     `, { id: draftIssueId, title, body, clientMutationId: idempotencyKey });
     return data.data.updateProjectV2DraftIssue;
+  }
+
+  async assertUnchanged(nodeId, expectedUpdatedAt, label) {
+    if (!expectedUpdatedAt) return;
+    const data = await this.client.graphql(`
+      query($id: ID!) {
+        node(id: $id) {
+          ... on ProjectV2Item { updatedAt }
+          ... on DraftIssue { updatedAt }
+        }
+      }
+    `, { id: nodeId });
+    const actual = data.data?.node?.updatedAt;
+    if (!actual) throw new Error(`${label} is no longer available`);
+    if (actual !== expectedUpdatedAt) {
+      const error = new Error(`${label} changed on GitHub after it was loaded; refresh and review before writing`);
+      error.statusCode = 409;
+      throw error;
+    }
   }
 }

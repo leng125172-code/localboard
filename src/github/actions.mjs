@@ -4,12 +4,12 @@ export class ActionsApi {
   }
 
   runs(owner, repo, options = {}) {
-    return this.client.rest('GET', `repos/${owner}/${repo}/actions/runs`, {
+    return this.client.restPaginated(`repos/${owner}/${repo}/actions/runs`, {
       per_page: options.perPage ?? 30,
       branch: options.branch,
       status: options.status,
       event: options.event
-    });
+    }, { listKey: 'workflow_runs' });
   }
 
   rerun({ owner, repo, runId, failedOnly = false }) {
@@ -21,4 +21,3 @@ export class ActionsApi {
     return this.client.rest('POST', `repos/${owner}/${repo}/actions/runs/${runId}/cancel`);
   }
 }
-

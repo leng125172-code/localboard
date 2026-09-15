@@ -7,6 +7,7 @@ import { runtimeDirectory, todoFilePath } from './paths.mjs';
 import { TodoStore } from './todo-store.mjs';
 import { createTodo, updateTodo } from './model.mjs';
 import { GitHubService } from '../github/service.mjs';
+import { inspectRepositoryContext } from './repository-context.mjs';
 
 export async function startBroker() {
   const runtime = runtimeDirectory();
@@ -50,7 +51,11 @@ export async function startBroker() {
         return send(response, 200, { events: state.listAgentEvents(url.searchParams.get('limit') ?? 100) });
       }
       if (request.method === 'GET' && url.pathname === '/v1/contexts') {
-        return send(response, 200, { contexts: state.listAgentContexts({ includeEnded: url.searchParams.get('includeEnded') !== 'false' }) });
+        return send(response, 200, { contexts: state.listAgentContexts({
+          includeEnded: url.searchParams.get('includeEnded') !== 'false',
+          maxAgeHours: url.searchParams.get('maxAgeHours') ?? 24,
+          staleAfterMinutes: url.searchParams.get('staleAfterMinutes') ?? 30
+        }) });
       }
       if (request.method === 'POST' && url.pathname === '/v1/contexts') {
         return send(response, 200, await serialize(async () => state.upsertAgentContext(await readJson(request))));
@@ -73,6 +78,10 @@ export async function startBroker() {
       }
       if (request.method === 'POST' && url.pathname === '/v1/github') {
         const body = await readJson(request);
+        const localRepoRoot = required(body.localRepoRoot, 'localRepoRoot');
+        const repositoryOverride = body.owner && body.repo ? `${body.owner}/${body.repo}` : undefined;
+        const context = await inspectRepositoryContext(localRepoRoot, { repositoryOverride });
+        if (!context.syncGitHub) throw new Error(`GitHub sync skipped: ${context.syncReason}`);
         return send(response, 200, await serialize(() => github.execute(body)));
       }
       return send(response, 404, { error: 'Not found' });

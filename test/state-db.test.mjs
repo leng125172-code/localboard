@@ -33,9 +33,9 @@ test('keeps concurrent Codex contexts isolated by context key', async () => {
     assert.equal(contexts.length, 2);
     assert.equal(contexts.find((item) => item.sessionId === 'a').status, 'idle');
     assert.equal(contexts.find((item) => item.sessionId === 'b').status, 'active');
+    assert.equal(state.listAgentContexts({ staleAfterMinutes: -1 }).find((item) => item.sessionId === 'b').status, 'stale');
   } finally {
     state.close();
     await rm(root, { recursive: true, force: true });
   }
 });
-

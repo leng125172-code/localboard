@@ -1,9 +1,9 @@
 node_modules/
 dist/
 coverage/
+.artifacts/
 *.log
 .DS_Store
 .localboard/.write-lock/
 .localboard/*.tmp
 .localboard/config.json
-

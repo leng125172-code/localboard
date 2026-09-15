@@ -22,9 +22,11 @@ app.whenReady().then(async () => {
   await ensureBroker();
 
   ipcMain.handle('broker:request', (_event, request) => brokerRequest(request.path, request.options));
-  ipcMain.handle('app:context', async () => {
-    const context = { cwd: process.cwd(), platform: process.platform };
-    context.repository = await inspectRepositoryContext(process.cwd());
+  ipcMain.handle('app:context', async (_event, requestedCwd) => {
+    const cwd = path.resolve(typeof requestedCwd === 'string' && requestedCwd ? requestedCwd : process.cwd());
+    const context = { cwd, platform: process.platform };
+    context.repository = await inspectRepositoryContext(cwd);
+    context.cwd = context.repository.repoRoot || context.repository.cwd;
     if (context.repository.syncGitHub) {
       const [owner, repo] = context.repository.githubRepository.split('/');
       context.github = {
@@ -81,19 +83,21 @@ function createWindow() {
 }
 
 async function openSticky(note, brokerRequest) {
-  const saved = await brokerRequest('/v1/notes', { method: 'POST', body: {
+  const requested = {
     ...note,
     id: 'codex-activity',
     title: 'Codex 执行便签',
     width: note.width ?? 380,
     height: note.height ?? 520,
     alwaysOnTop: true
-  } });
+  };
   if (stickyWindow && !stickyWindow.isDestroyed()) {
     stickyWindow.show();
     stickyWindow.focus();
-    return saved;
+    brokerRequest('/v1/notes', { method: 'POST', body: requested }).catch(() => {});
+    return requested;
   }
+  const saved = await brokerRequest('/v1/notes', { method: 'POST', body: requested });
   const area = screen.getPrimaryDisplay().workArea;
   stickyWindow = new BrowserWindow({
     x: saved.x ?? area.x + area.width - saved.width - 24,
