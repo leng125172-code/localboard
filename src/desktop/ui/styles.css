@@ -341,21 +341,31 @@ h1 { font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size
 .command-row input[type="color"] { width: 34px; height: 28px; padding: 2px; border: 1px solid rgba(0,0,0,.14); border-radius: 4px; background: transparent; }
 .command-wide { width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px; }
 .sticky-sections { min-height: 0; display: grid; overflow: hidden; }
-.sticky-section { min-height: 0; display: grid; grid-template-rows: 36px minmax(0,1fr); overflow: hidden; padding: 0; border: 0; }
-.sticky-section > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 9px 0 11px; background: rgba(255,255,255,.12); }
-.sticky-section > header h2 { margin: 0; font-size: .78em; font-weight: 650; letter-spacing: .015em; text-transform: none; color: rgba(30,41,37,.74); }
-.sticky-section > header button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: rgba(30,41,37,.65); }
-.sticky-section > header button:hover { background: rgba(255,255,255,.48); }
-.sticky-section > header .lb-icon { width: 15px; height: 15px; }
-.section-content { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 10px 8px; scrollbar-width: none; }
+.sticky .sticky-section { min-height: 0; display: grid; grid-template-rows: 34px minmax(0,1fr); overflow: hidden; padding: 0; border: 0; background: rgba(255,255,255,.025); }
+.sticky-section > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 7px 0 12px; border-bottom: 1px solid rgba(76,64,0,.075); background: rgba(255,255,255,.11); }
+.sticky-section > header h2 { min-width: 0; margin: 0; display: flex; align-items: center; gap: 7px; color: rgba(30,41,37,.78); font-size: 12px; font-weight: 650; line-height: 1; letter-spacing: .01em; text-transform: none; }
+.sticky-section > header h2 > span:not(.section-count) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sticky-section > header h2 > .lb-icon { width: 15px; height: 15px; flex: 0 0 15px; color: rgba(15,108,89,.84); }
+.section-count { min-width: 18px; height: 18px; padding: 0 5px; display: inline-grid; place-items: center; border-radius: 9px; background: rgba(15,108,89,.12); color: #0b604f; font-size: 10px; font-weight: 700; }
+.section-count:empty { display: none; }
+.sticky-section > header button { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: rgba(30,41,37,.62); }
+.sticky-section > header button:hover, .sticky-section > header button:focus-visible { background: rgba(255,255,255,.5); color: #0f6c59; }
+.sticky-section > header button:focus-visible { outline: 2px solid rgba(15,108,89,.45); outline-offset: -2px; }
+.sticky-section > header button .lb-icon { width: 14px; height: 14px; transition: transform 120ms ease; }
+.section-content { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 5px 11px 9px; scrollbar-width: none; }
 .section-content::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .sticky-section.collapsed .section-content { display: none; }
-.section-resizer { position: relative; z-index: 4; cursor: row-resize; background: rgba(74,63,10,.10); touch-action: none; }
-.section-resizer::after { content: ""; position: absolute; left: 42%; right: 42%; top: 2px; height: 1px; background: rgba(74,63,10,.32); }
-.section-resizer:hover, .section-resizer:focus-visible { background: rgba(15,108,89,.28); }
-.sticky-contexts { width: 100%; max-height: none; gap: 6px; padding-right: 0; overflow: visible; }
-.context-card { padding: 7px 8px; border-radius: 6px; }
-.quick-add { height: 32px; margin: 0 0 6px; display: flex; align-items: center; overflow: hidden; border: 1px solid rgba(65,57,18,.18); border-radius: 5px; background: rgba(255,255,255,.32); }
+.sticky-section.collapsed > header { border-bottom-color: transparent; background: rgba(255,255,255,.16); }
+.section-resizer { position: relative; z-index: 4; cursor: row-resize; background: transparent; touch-action: none; }
+.section-resizer::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgba(76,64,0,.11); transform: translateY(-50%); }
+.section-resizer::after { content: ""; position: absolute; left: 50%; top: 50%; width: 30px; height: 3px; border-radius: 2px; background: rgba(74,63,10,.22); opacity: 0; transform: translate(-50%,-50%); transition: opacity 100ms ease, background 100ms ease; }
+.section-resizer:hover::after, .section-resizer:focus-visible::after { background: #0f6c59; opacity: 1; }
+.section-resizer:focus-visible { outline: 0; }
+.section-resizer.inactive { cursor: default; pointer-events: none; }
+.section-resizer.inactive::after { display: none; }
+.sticky-contexts { width: 100%; height: 100%; max-height: none; align-content: start; gap: 6px; padding-right: 0; overflow: visible; }
+.context-card { padding: 8px 9px; border-radius: 6px; }
+.quick-add { height: 32px; margin: 0 0 5px; display: flex; align-items: center; flex: 0 0 32px; overflow: hidden; border: 1px solid rgba(65,57,18,.18); border-radius: 5px; background: rgba(255,255,255,.34); }
 .quick-add input { min-width: 0; flex: 1; padding: 0 8px; border: 0; outline: 0; background: transparent; font-size: 12px; }
 .quick-add button { width: 32px; height: 30px; display: grid; place-items: center; padding: 0; border: 0; border-left: 1px solid rgba(65,57,18,.13); background: transparent; }
 .quick-add button:hover { background: rgba(255,255,255,.45); }
@@ -368,8 +378,18 @@ h1 { font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size
 .todo-open { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 28px; padding: 0; border: 0; border-radius: 4px; background: transparent; opacity: .38; }
 .sticky-todo-row:hover .todo-open, .todo-open:focus-visible { opacity: 1; }
 .todo-open .lb-icon { width: 14px; height: 14px; }
-.bookmark-tabs { width: 100%; padding: 1px 0 6px; }
-.sticky-section.memo textarea { height: 100%; min-height: 0; resize: none; padding: 2px 4px 8px; }
+.sticky-section .sticky-empty { min-height: 42px; height: 100%; padding: 8px; display: grid; place-items: center; }
+.sticky-section[data-section="global"] .section-content,
+.sticky-section[data-section="repository"] .section-content { display: flex; flex-direction: column; }
+#sticky-global-todos, #sticky-repo-todos { min-height: 0; }
+#sticky-global-todos:has(> .sticky-empty:only-child),
+#sticky-repo-todos:has(> .sticky-empty:only-child) { flex: 1; }
+.bookmark-tabs { width: 100%; flex: 0 0 auto; padding: 1px 0 5px; }
+.bookmark-tabs:has(> .sticky-empty:only-child) { min-height: 0; flex: 1; padding: 0; border-bottom: 0; }
+.sticky .sticky-section.memo { min-height: 0; grid-template-rows: 34px minmax(0,1fr); }
+.sticky-section.memo .section-content { padding-top: 3px; }
+.sticky-section.memo textarea { height: 100%; min-height: 0; resize: none; padding: 4px 3px 8px; scrollbar-width: none; }
+.sticky-section.memo textarea::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .sticky-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; border-top: 1px solid rgba(76,64,0,.12); background: rgba(255,255,255,.13); }
 .edge-handle { display: none; position: absolute; z-index: 100; background: #0f6c59; }
 .edge-handle i { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: #6ccb5f; box-shadow: 0 0 0 2px rgba(255,255,255,.7); }
@@ -384,6 +404,12 @@ h1 { font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size
 .sticky[data-edge="left"] .edge-handle i, .sticky[data-edge="right"] .edge-handle i { top: 50%; left: 3px; }
 .sticky[data-edge="top"] .edge-handle i, .sticky[data-edge="bottom"] .edge-handle i { left: 50%; top: 3px; }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+
+@media (max-width: 340px) {
+  .sticky-head { padding-left: 8px; }
+  .sticky-title { gap: 5px; font-size: .94em; }
+  .sticky-window-actions button { min-width: 27px; width: 27px; }
+}
 
 @media (max-width: 1100px) {
   .shell.project-pane-expanded { grid-template-columns: 56px 236px minmax(0,1fr); }

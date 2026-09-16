@@ -132,7 +132,30 @@ try {
   const nativeSticky = await electronApp.browserWindow(sticky);
   await sticky.locator('[data-section-toggle="global"]').click();
   assert.equal(await sticky.locator('[data-section="global"]').getAttribute('class').then((value) => value.includes('collapsed')), true);
+  assert.equal(await sticky.locator('[data-section-toggle="global"]').getAttribute('aria-label'), '展开全局个人待办');
+  assert.equal(await sticky.locator('[data-resizer="0"]').getAttribute('aria-disabled'), 'true');
+  assert.equal(await sticky.locator('[data-resizer="1"]').getAttribute('aria-disabled'), 'true');
+  await sticky.screenshot({ path: resolve(artifacts, 'activity-sticky-collapsed.png') });
   await sticky.locator('[data-section-toggle="global"]').click();
+  assert.equal(await sticky.locator('[data-section-toggle="global"]').getAttribute('aria-label'), '折叠全局个人待办');
+  assert.equal(await sticky.locator('[data-resizer="0"]').getAttribute('aria-disabled'), 'false');
+  await sticky.waitForTimeout(100);
+  const stickyFit = await sticky.evaluate(() => ({
+    innerWidth,
+    innerHeight,
+    horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    verticalOverflow: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+    sectionsFit: document.querySelector('#sticky-sections').getBoundingClientRect().bottom <= document.querySelector('.sticky-foot').getBoundingClientRect().top + 1,
+    gridTemplateRows: getComputedStyle(document.querySelector('#sticky-sections')).gridTemplateRows,
+    sectionHeights: [...document.querySelectorAll('.sticky-section')].map((item) => Math.round(item.getBoundingClientRect().height)),
+    headerHeights: [...document.querySelectorAll('.sticky-section > header')].map((item) => Math.round(item.getBoundingClientRect().height)),
+    resizerHeights: [...document.querySelectorAll('.section-resizer')].map((item) => Math.round(item.getBoundingClientRect().height))
+  }));
+  assert.equal(stickyFit.horizontalOverflow, false);
+  assert.equal(stickyFit.verticalOverflow, false);
+  assert.equal(stickyFit.sectionsFit, true);
+  assert.deepEqual(stickyFit.headerHeights, [34, 34, 34, 34]);
+  assert.deepEqual(stickyFit.resizerHeights, [7, 7, 7]);
   await sticky.locator('[data-resizer="0"]').focus();
   await sticky.keyboard.press('ArrowDown');
   const resizerBox = await sticky.locator('[data-resizer="0"]').boundingBox();
@@ -144,6 +167,15 @@ try {
   await sticky.locator('[data-preset="small"]').click();
   await main.waitForTimeout(200);
   assert.deepEqual(await nativeSticky.evaluate((window) => window.getSize()), [320, 480]);
+  const smallStickyFit = await sticky.evaluate(() => ({
+    innerWidth,
+    innerHeight,
+    horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    verticalOverflow: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+    sectionsFit: document.querySelector('#sticky-sections').getBoundingClientRect().bottom <= document.querySelector('.sticky-foot').getBoundingClientRect().top + 1
+  }));
+  assert.deepEqual(smallStickyFit, { innerWidth: 320, innerHeight: 480, horizontalOverflow: false, verticalOverflow: false, sectionsFit: true });
+  await sticky.screenshot({ path: resolve(artifacts, 'activity-sticky-small.png') });
   await sticky.locator('[data-preset="medium"]').click();
   await main.waitForTimeout(200);
   assert.deepEqual(await nativeSticky.evaluate((window) => window.getSize()), [400, 680]);
@@ -228,7 +260,7 @@ try {
   assert.equal(fit.projectScrollbar, 'none');
   await main.screenshot({ path: resolve(artifacts, 'navigation-minimum-window.png') });
 
-  console.log(JSON.stringify({ ok: true, pageErrors, fit, screenshots: artifacts }, null, 2));
+  console.log(JSON.stringify({ ok: true, pageErrors, fit, stickyFit, smallStickyFit, screenshots: artifacts }, null, 2));
 } finally {
   await electronApp.close().catch(() => {});
   await brokerRequest(`/v1/contexts/${encodeURIComponent(fixtureKey)}`, { method: 'DELETE' }).catch(() => {});

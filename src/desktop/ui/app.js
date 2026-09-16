@@ -733,7 +733,7 @@ async function renderActivitySticky(id) {
   if (!note) return app.textContent = '便签不存在';
   const settings = { ...defaultSettings(), ...(settingsResponse.settings || {}), sticky: { ...defaultSettings().sticky, ...(settingsResponse.settings?.sticky || {}) } };
   const sectionIds = ['agents', 'global', 'repository', 'memo'];
-  const defaultRatios = [.30, .17, .23, .30];
+  const defaultRatios = [.27, .19, .22, .32];
   const layout = {
     preset: note.layout?.preset || settings.sticky.defaultPreset,
     sectionRatios: normalizeRatios(note.layout?.sectionRatios, defaultRatios),
@@ -755,7 +755,7 @@ async function renderActivitySticky(id) {
       <button class="command-wide" data-sticky-window="undock">${icon('unpin')}解除屏幕吸附</button>
     </div>
     <div class="sticky-sections" id="sticky-sections">
-      ${stickySection('agents', `Codex 执行 <span id="sticky-agent-count"></span>`, `<div class="sticky-contexts" id="sticky-contexts"></div>`, layout)}
+      ${stickySection('agents', 'Codex 执行', `<div class="sticky-contexts" id="sticky-contexts"></div>`, layout, '', '<span class="section-count" id="sticky-agent-count"></span>')}
       <div class="section-resizer" data-resizer="0" role="separator" aria-orientation="horizontal" tabindex="0"></div>
       ${stickySection('global', '全局个人待办', `<form class="quick-add" data-quick-add="global"><input aria-label="新增全局待办" placeholder="新增全局待办，按 Enter 保存" /><button title="新增">${icon('add')}</button></form><div id="sticky-global-todos"></div>`, layout)}
       <div class="section-resizer" data-resizer="1" role="separator" aria-orientation="horizontal" tabindex="0"></div>
@@ -814,6 +814,7 @@ async function renderActivitySticky(id) {
     layout.collapsedSections = collapsed ? layout.collapsedSections.filter((item) => item !== sectionId) : [...layout.collapsedSections, sectionId];
     document.querySelector(`[data-section="${sectionId}"]`).classList.toggle('collapsed', !collapsed);
     button.setAttribute('aria-expanded', String(collapsed));
+    button.setAttribute('aria-label', `${collapsed ? '折叠' : '展开'}${button.dataset.sectionLabel}`);
     button.innerHTML = icon(collapsed ? 'chevron-up' : 'chevron-down');
     setSectionGrid(layout);
     await persistStickyLayout(note.id, layout);
@@ -827,7 +828,7 @@ async function renderActivitySticky(id) {
         api.request('/v1/todos?scope=global'),
         api.request('/v1/projects')
       ]);
-      document.querySelector('#sticky-agent-count').textContent = contexts.contexts.length ? `· ${contexts.contexts.length}` : '';
+      document.querySelector('#sticky-agent-count').textContent = contexts.contexts.length ? String(contexts.contexts.length) : '';
       stickyRoot.dataset.agentState = contexts.contexts.some((item) => item.status === 'active') ? 'active'
         : contexts.contexts.some((item) => item.status === 'interrupted') ? 'error'
           : contexts.contexts.length ? 'idle' : 'offline';
@@ -915,9 +916,10 @@ async function renderActivitySticky(id) {
   });
 }
 
-function stickySection(id, title, body, layout, extraClass = '') {
+function stickySection(id, title, body, layout, extraClass = '', titleExtra = '') {
   const collapsed = layout.collapsedSections.includes(id);
-  return `<section class="sticky-section ${extraClass} ${collapsed ? 'collapsed' : ''}" data-section="${id}"><header><h2>${title}</h2><button data-section-toggle="${id}" aria-label="折叠或展开${title}" aria-expanded="${!collapsed}">${icon(collapsed ? 'chevron-up' : 'chevron-down')}</button></header><div class="section-content">${body}</div></section>`;
+  const sectionIcons = { agents: 'robot', global: 'todo', repository: 'project', memo: 'note' };
+  return `<section class="sticky-section ${extraClass} ${collapsed ? 'collapsed' : ''}" data-section="${id}"><header><h2>${icon(sectionIcons[id])}<span>${escapeHtml(title)}</span>${titleExtra}</h2><button data-section-toggle="${id}" data-section-label="${escapeHtml(title)}" aria-label="${collapsed ? '展开' : '折叠'}${escapeHtml(title)}" aria-expanded="${!collapsed}">${icon(collapsed ? 'chevron-up' : 'chevron-down')}</button></header><div class="section-content">${body}</div></section>`;
 }
 
 function stickyTodo(todo, scope) {
@@ -950,9 +952,18 @@ function setSectionGrid(layout) {
   const grid = document.querySelector('#sticky-sections');
   if (!grid) return;
   const rows = [];
-  ['agents', 'global', 'repository', 'memo'].forEach((section, index) => {
-    rows.push(layout.collapsedSections.includes(section) ? '36px' : `minmax(${section === 'memo' ? 72 : 54}px, ${layout.sectionRatios[index]}fr)`);
-    if (index < 3) rows.push('5px');
+  const sectionIds = ['agents', 'global', 'repository', 'memo'];
+  const resizers = [...grid.querySelectorAll('[data-resizer]')];
+  sectionIds.forEach((section, index) => {
+    const collapsed = layout.collapsedSections.includes(section);
+    rows.push(collapsed ? '34px' : `minmax(${section === 'memo' ? 84 : 70}px, ${layout.sectionRatios[index]}fr)`);
+    if (index < 3) {
+      const inactive = collapsed || layout.collapsedSections.includes(sectionIds[index + 1]);
+      rows.push(inactive ? '1px' : '7px');
+      resizers[index]?.classList.toggle('inactive', inactive);
+      resizers[index]?.setAttribute('aria-disabled', String(inactive));
+      resizers[index]?.setAttribute('tabindex', inactive ? '-1' : '0');
+    }
   });
   grid.style.gridTemplateRows = rows.join(' ');
 }
@@ -966,7 +977,9 @@ function installSectionResizers(layout, noteId) {
       const first = sections[index].getBoundingClientRect().height;
       const second = sections[index + 1].getBoundingClientRect().height;
       const total = first + second;
-      const nextFirst = Math.max(54, Math.min(total - 54, first + delta));
+      const firstMinimum = sections[index].dataset.section === 'memo' ? 84 : 70;
+      const secondMinimum = sections[index + 1].dataset.section === 'memo' ? 84 : 70;
+      const nextFirst = Math.max(firstMinimum, Math.min(total - secondMinimum, first + delta));
       const pairRatio = layout.sectionRatios[index] + layout.sectionRatios[index + 1];
       layout.sectionRatios[index] = pairRatio * nextFirst / total;
       layout.sectionRatios[index + 1] = pairRatio - layout.sectionRatios[index];
@@ -976,6 +989,7 @@ function installSectionResizers(layout, noteId) {
       setSectionGrid(layout);
     };
     resizer.onpointerdown = (event) => {
+      if (resizer.classList.contains('inactive')) return;
       event.preventDefault();
       api.stickyPointer?.(true);
       resizer.setPointerCapture(event.pointerId);
@@ -983,9 +997,9 @@ function installSectionResizers(layout, noteId) {
       resizer.onpointermove = (move) => { const delta = move.clientY - lastY; lastY = move.clientY; adjust(delta); };
       resizer.onpointerup = async () => { resizer.onpointermove = null; await persistStickyLayout(noteId, layout); };
     };
-    resizer.ondblclick = async () => { layout.sectionRatios = [.30, .17, .23, .30]; setSectionGrid(layout); await persistStickyLayout(noteId, layout); };
+    resizer.ondblclick = async () => { if (resizer.classList.contains('inactive')) return; layout.sectionRatios = [.27, .19, .22, .32]; setSectionGrid(layout); await persistStickyLayout(noteId, layout); };
     resizer.onkeydown = async (event) => {
-      if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      if (resizer.classList.contains('inactive') || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
       event.preventDefault();
       await adjust(event.key === 'ArrowUp' ? -12 : 12);
       await persistStickyLayout(noteId, layout);
