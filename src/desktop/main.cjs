@@ -1,7 +1,6 @@
 const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, nativeTheme } = require('electron');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const fs = require('node:fs');
 
 if (process.env.LOCALBOARD_E2E_USER_DATA) app.setPath('userData', process.env.LOCALBOARD_E2E_USER_DATA);
 
@@ -72,12 +71,18 @@ app.whenReady().then(async () => {
     const { handleCodexHook } = await import('../core/codex-hook.mjs');
     const chunks = [];
     for await (const chunk of process.stdin) chunks.push(chunk);
-    await handleCodexHook(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')).catch(() => {});
-    return app.quit();
+    try {
+      await handleCodexHook(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+      return app.quit();
+    } catch (error) {
+      console.error(`localboard hook failed: ${error.message}`);
+      return app.exit(1);
+    }
   }
   if (utilityMode === 'install') {
     const { installBundledIntegrations } = await import('../core/integration-installer.mjs');
-    await installBundledIntegrations({ appRoot: app.getAppPath(), integrationRoot: process.resourcesPath, command: process.execPath });
+    await installBundledIntegrations({ appRoot: app.getAppPath(), integrationRoot: process.resourcesPath,
+      command: process.execPath, appVersion: app.getVersion() });
     return app.quit();
   }
   const { ensureBroker, brokerRequest } = await import('../core/broker-client.mjs');
@@ -91,9 +96,10 @@ app.whenReady().then(async () => {
   applyRuntimeSettings({ autoStart: true, closeToTray: true, ...(storedSettings.settings || {}) });
   if (app.isPackaged) {
     const statusPath = path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'LocalBoard', 'integration-status.json');
-    if (!fs.existsSync(statusPath)) {
-      const { installBundledIntegrations } = await import('../core/integration-installer.mjs');
-      await installBundledIntegrations({ appRoot: app.getAppPath(), integrationRoot: process.resourcesPath, command: process.execPath });
+    const { bundledIntegrationsNeedRefresh, installBundledIntegrations } = await import('../core/integration-installer.mjs');
+    if (await bundledIntegrationsNeedRefresh(statusPath, app.getVersion())) {
+      await installBundledIntegrations({ appRoot: app.getAppPath(), integrationRoot: process.resourcesPath,
+        command: process.execPath, statusPath, appVersion: app.getVersion() });
     }
   }
 

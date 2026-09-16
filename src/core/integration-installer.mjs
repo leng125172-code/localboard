@@ -7,14 +7,19 @@ import { runtimeDirectory } from './paths.mjs';
 export async function installBundledIntegrations({ appRoot, integrationRoot = appRoot, command = process.execPath,
   codexHome = process.env.CODEX_HOME || join(homedir(), '.codex'),
   agentHome = process.env.LOCALBOARD_AGENT_HOME || join(homedir(), '.agents'),
-  statusPath = join(runtimeDirectory(), 'integration-status.json') } = {}) {
+  statusPath = join(runtimeDirectory(), 'integration-status.json'), appVersion = null } = {}) {
   const root = resolve(appRoot);
   const results = {};
   results.codex = await attempt(async () => {
+    const hookCommand = await writePackagedCommandLauncher({
+      command,
+      script: join(root, 'src', 'cli.mjs'),
+      target: join(dirname(statusPath), 'bin', 'localboard.cmd')
+    });
     const hooksPath = join(codexHome, 'hooks.json');
     const hooks = await readJson(hooksPath, { hooks: {} });
     hooks.hooks ||= {};
-    const hook = { type: 'command', command: `"${command}" --hook`, commandWindows: `"${command}" --hook`, timeout: 10 };
+    const hook = { type: 'command', command: `"${hookCommand}" hook`, commandWindows: `"${hookCommand}" hook`, timeout: 10 };
     for (const eventName of ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'Stop', 'SessionEnd']) {
       hooks.hooks[eventName] = mergeLocalBoardHook(Array.isArray(hooks.hooks[eventName]) ? hooks.hooks[eventName] : [], hook);
     }
@@ -26,7 +31,7 @@ export async function installBundledIntegrations({ appRoot, integrationRoot = ap
     await atomicBackupWrite(configPath, enableMcp(enableHooks(config), command, {
       args: [mcpScript, 'mcp'], env: mcpEnv
     }));
-    return { hooksPath, configPath };
+    return { hooksPath, configPath, hookCommand };
   });
   results.skill = await attempt(async () => {
     const target = join(agentHome, 'skills', 'localboard');
@@ -57,10 +62,41 @@ export async function installBundledIntegrations({ appRoot, integrationRoot = ap
     await atomicBackupWrite(marketplacePath, `${JSON.stringify(marketplace, null, 2)}\n`);
     return { target, marketplacePath };
   });
-  const status = { installedAt: new Date().toISOString(), results };
+  const status = { appVersion, installedAt: new Date().toISOString(), results };
   await mkdir(dirname(statusPath), { recursive: true });
   await writeFile(statusPath, JSON.stringify(status, null, 2), 'utf8');
   return status;
+}
+
+export async function bundledIntegrationsNeedRefresh(statusPath = join(runtimeDirectory(), 'integration-status.json'), appVersion) {
+  if (!appVersion) return false;
+  try {
+    const status = await readJson(statusPath, null);
+    return status?.appVersion !== appVersion
+      || Object.values(status?.results || {}).some((result) => result?.ok !== true);
+  } catch {
+    return true;
+  }
+}
+
+async function writePackagedCommandLauncher({ command, script, target }) {
+  await mkdir(dirname(target), { recursive: true });
+  const content = [
+    '@echo off',
+    'setlocal',
+    'set "ELECTRON_RUN_AS_NODE=1"',
+    `${batchArgument(command)} ${batchArgument(script)} %*`,
+    'exit /b %ERRORLEVEL%',
+    ''
+  ].join('\r\n');
+  await writeFile(target, content, 'utf8');
+  return target;
+}
+
+function batchArgument(value) {
+  const text = String(value);
+  if (text.includes('"')) throw new Error(`Windows command path contains an unsupported quote: ${text}`);
+  return `"${text.replaceAll('%', '%%')}"`;
 }
 
 async function attempt(work) {

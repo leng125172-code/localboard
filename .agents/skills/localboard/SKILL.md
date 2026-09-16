@@ -7,6 +7,8 @@ description: Manage LocalBoard personal todos and, only when the current path is
 
 At the start of LocalBoard work, run `localboard context publish --source skill --cwd <codex-session-launch-directory>`. Use the exact directory in which the Codex session started, never a nested repository or temporary directory used by an individual command. The CLI uses `CODEX_SESSION_ID` or `CODEX_THREAD_ID` when available, so repeated publications update only this session's entry in the single desktop activity sticky; it must not edit the shared memo or another Codex session's entry. Do not pass another session's `--context-key`.
 
+If that launch directory is not a Git repository but the user's task explicitly targets a nested initialized Git repository, also run `localboard workspace register --cwd <target-repository-root>`. This adds the actual project to the main window without replacing the session's truthful launch-directory context. Do not scan for or register unrelated repositories.
+
 Use `localboard context inspect --json` before any GitHub operation:
 
 - If `isGitRepository` is false, do not initialize Git implicitly and do not query or mutate GitHub.

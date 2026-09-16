@@ -215,6 +215,7 @@ async function hookCommand() {
   } catch (error) {
     await logHookError(error).catch(() => {});
     process.stderr.write(`localboard hook failed: ${error.message}\n`);
+    process.exitCode = 1;
   }
   return {};
 }
